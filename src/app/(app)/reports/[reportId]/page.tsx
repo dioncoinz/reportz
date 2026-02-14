@@ -23,7 +23,13 @@ export default function ReportDetailPage() {
   const [loading, setLoading] = useState(true);
   const [report, setReport] = useState<ReportRow | null>(null);
   const [err, setErr] = useState<string | null>(null);
-
+<button
+  onClick={() =>
+    window.open(`/api/export-report?reportId=${report.id}`, "_blank")
+  }
+>
+  Export Word Report
+</button>
   useEffect(() => {
     async function load() {
       if (!reportId) return;
