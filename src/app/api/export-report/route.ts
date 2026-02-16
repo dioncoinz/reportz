@@ -8,25 +8,30 @@ import {
   Document,
   Footer,
   Header,
-  HeadingLevel,
   ImageRun,
   Packer,
   PageBreak,
+  PageNumber,
   Paragraph,
+  ShadingType,
   Table,
   TableCell,
   TableRow,
   TextRun,
+  VerticalAlign,
   WidthType,
 } from "docx";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+type ReportRow = {
+  id: string;
+  tenant_id: string;
+  name: string;
+  start_date: string | null;
+  end_date: string | null;
+  status: string;
+};
 
 type BrandingRow = {
-  tenant_id: string;
   company_name: string | null;
   header_text: string | null;
   footer_text: string | null;
@@ -34,12 +39,35 @@ type BrandingRow = {
   accent_hex: string | null;
 };
 
-function safeFileName(name: string) {
-  return name
-    .replace(/[<>:"/\\|?*\x00-\x1F]/g, "")
-    .replace(/\s+/g, " ")
-    .trim()
-    .slice(0, 80);
+type WorkOrderRow = {
+  id: string;
+  wo_number: string;
+  title: string | null;
+  status: "open" | "complete" | "cancelled";
+  cancelled_reason: string | null;
+  completed_at: string | null;
+};
+
+type UpdateRow = {
+  id: string;
+  work_order_id: string;
+  comment: string | null;
+  photo_urls: string[] | null;
+  created_at: string;
+};
+
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY!
+);
+
+function safe(name: string) {
+  return name.replace(/[<>:"/\\|?*]/g, "").slice(0, 80);
+}
+
+function normalizeHex(raw: string | null | undefined, fallback = "C7662D") {
+  const cleaned = (raw ?? "").trim().replace(/^#/, "");
+  return /^[0-9A-Fa-f]{6}$/.test(cleaned) ? cleaned.toUpperCase() : fallback;
 }
 
 function noBorders() {
@@ -48,190 +76,595 @@ function noBorders() {
     bottom: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
     left: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
     right: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
-    insideHorizontal: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
-    insideVertical: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
   };
 }
 
-function dashboardRow(label: string, value: string) {
-  return new TableRow({
+function softBorder(color = "D8DEEA") {
+  return {
+    top: { style: BorderStyle.SINGLE, size: 1, color },
+    bottom: { style: BorderStyle.SINGLE, size: 1, color },
+    left: { style: BorderStyle.SINGLE, size: 1, color },
+    right: { style: BorderStyle.SINGLE, size: 1, color },
+  };
+}
+
+function divider(color = "D8DEEA") {
+  return new Paragraph({
+    border: {
+      bottom: {
+        style: BorderStyle.SINGLE,
+        size: 3,
+        color,
+      },
+    },
+    spacing: { after: 220 },
+  });
+}
+
+function imgType(path: string): "png" | "jpg" {
+  return path.toLowerCase().endsWith(".png") ? "png" : "jpg";
+}
+
+async function file(bucket: string, path: string) {
+  const { data } = await supabase.storage.from(bucket).download(path);
+  if (!data) return null;
+  return Buffer.from(await data.arrayBuffer());
+}
+
+function statusTheme(status: WorkOrderRow["status"]) {
+  if (status === "complete") return { text: "1B8F5A", fill: "EAF8F0" };
+  if (status === "cancelled") return { text: "B92C2C", fill: "FCEDEE" };
+  return { text: "B67710", fill: "FFF7E4" };
+}
+
+function kpiCell(label: string, value: string, fill: string, color = "0F172A") {
+  return new TableCell({
+    verticalAlign: VerticalAlign.CENTER,
+    shading: { type: ShadingType.CLEAR, fill },
+    borders: softBorder("D8DEEA"),
+    margins: { top: 200, bottom: 200, left: 220, right: 220 },
     children: [
-      new TableCell({
-        children: [
-          new Paragraph({
-            children: [new TextRun({ text: label, bold: true })],
-          }),
-        ],
+      new Paragraph({
+        children: [new TextRun({ text: label.toUpperCase(), size: 18, color: "5F6F88", bold: true })],
+        spacing: { after: 120 },
       }),
-      new TableCell({
-        children: [new Paragraph(value)],
+      new Paragraph({
+        children: [new TextRun({ text: value, size: 42, bold: true, color })],
       }),
     ],
   });
 }
 
-async function downloadStorageFile(bucket: string, path: string): Promise<Buffer | null> {
-  const { data, error } = await supabase.storage.from(bucket).download(path);
-  if (error || !data) return null;
-  const ab = await data.arrayBuffer();
-  return Buffer.from(ab);
+function pct(part: number, whole: number) {
+  if (!whole) return 0;
+  return Math.round((part / whole) * 100);
 }
 
-function guessImageType(pathOrName: string): "png" | "jpg" {
-  const lower = (pathOrName || "").toLowerCase();
-  if (lower.endsWith(".png")) return "png";
-  return "jpg";
+function horizontalBar(value: number, max: number, fill = "1B8F5A", empty = "E7EDF7") {
+  const percent = Math.max(0, Math.min(100, pct(value, max)));
+  const remainder = 100 - percent;
+
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    borders: noBorders(),
+    rows: [
+      new TableRow({
+        children: [
+          new TableCell({
+            width: { size: percent || 1, type: WidthType.PERCENTAGE },
+            shading: { type: ShadingType.CLEAR, fill },
+            borders: noBorders(),
+            children: [new Paragraph({})],
+          }),
+          new TableCell({
+            width: { size: remainder || 1, type: WidthType.PERCENTAGE },
+            shading: { type: ShadingType.CLEAR, fill: empty },
+            borders: noBorders(),
+            children: [new Paragraph({})],
+          }),
+        ],
+      }),
+    ],
+  });
+}
+
+function statusBarRow(label: string, count: number, total: number, color: string) {
+  const percent = pct(count, total);
+  return new TableRow({
+    children: [
+      new TableCell({
+        width: { size: 26, type: WidthType.PERCENTAGE },
+        borders: softBorder("E1E7F2"),
+        margins: { top: 90, bottom: 90, left: 140, right: 140 },
+        children: [
+          new Paragraph({
+            children: [new TextRun({ text: label, size: 19, color: "334155", bold: true })],
+          }),
+        ],
+      }),
+      new TableCell({
+        width: { size: 12, type: WidthType.PERCENTAGE },
+        borders: softBorder("E1E7F2"),
+        margins: { top: 90, bottom: 90, left: 140, right: 140 },
+        children: [
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [new TextRun({ text: String(count), size: 19, bold: true, color })],
+          }),
+        ],
+      }),
+      new TableCell({
+        width: { size: 50, type: WidthType.PERCENTAGE },
+        borders: softBorder("E1E7F2"),
+        margins: { top: 90, bottom: 90, left: 140, right: 140 },
+        children: [horizontalBar(count, total, color)],
+      }),
+      new TableCell({
+        width: { size: 12, type: WidthType.PERCENTAGE },
+        borders: softBorder("E1E7F2"),
+        margins: { top: 90, bottom: 90, left: 120, right: 120 },
+        children: [
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [new TextRun({ text: `${percent}%`, size: 18, color, bold: true })],
+          }),
+        ],
+      }),
+    ],
+  });
 }
 
 export async function GET(req: NextRequest) {
-  try {
-    const reportId = req.nextUrl.searchParams.get("reportId");
-    if (!reportId) {
-      return NextResponse.json({ error: "Missing reportId" }, { status: 400 });
-    }
+  const id = req.nextUrl.searchParams.get("reportId");
+  if (!id) return NextResponse.json({ error: "Missing reportId" }, { status: 400 });
 
-    // =========================
-    // FETCH REPORT
-    // =========================
-    const { data: report, error: repErr } = await supabase
-      .from("reports")
-      .select("id, name, start_date, end_date, tenant_id")
-      .eq("id", reportId)
-      .single();
+  const { data: report, error: reportErr } = await supabase
+    .from("reports")
+    .select("id, tenant_id, name, start_date, end_date, status")
+    .eq("id", id)
+    .single<ReportRow>();
 
-    if (repErr || !report) {
-      return NextResponse.json({ error: repErr?.message || "Report not found" }, { status: 404 });
-    }
+  if (reportErr || !report) {
+    return NextResponse.json({ error: reportErr?.message ?? "Report not found" }, { status: 404 });
+  }
 
-    // =========================
-    // BRANDING (tenant)
-    // =========================
-    let branding: BrandingRow | null = null;
-    let logoBuf: Buffer | null = null;
-    const tenantId = (report as any).tenant_id as string | undefined;
+  const { data: branding } = await supabase
+    .from("tenant_branding")
+    .select("company_name, header_text, footer_text, logo_path, accent_hex")
+    .eq("tenant_id", report.tenant_id)
+    .maybeSingle<BrandingRow>();
 
-    if (tenantId) {
-      const { data: b } = await supabase
-        .from("tenant_branding")
-        .select("tenant_id, company_name, header_text, footer_text, logo_path, accent_hex")
-        .eq("tenant_id", tenantId)
-        .maybeSingle();
+  const accent = normalizeHex(branding?.accent_hex, "C7662D");
 
-      branding = (b as BrandingRow) ?? null;
+  let logo: Buffer | null = null;
+  if (branding?.logo_path) {
+    logo = await file("branding-logos", branding.logo_path);
+  }
 
-      if (branding?.logo_path) {
-        logoBuf = await downloadStorageFile("branding-logos", branding.logo_path);
-      }
-    }
+  const { data: wos } = await supabase
+    .from("work_orders")
+    .select("id, wo_number, title, status, cancelled_reason, completed_at")
+    .eq("report_id", id)
+    .order("wo_number")
+    .returns<WorkOrderRow[]>();
 
-    const companyName = branding?.company_name || "Valeron";
-    const headerText = branding?.header_text || "Valeron • Reportz Demo";
-    const footerText = branding?.footer_text || "Generated by Reportz";
-    const logoType = branding?.logo_path ? guessImageType(branding.logo_path) : "png";
+  const woRows = wos ?? [];
+  const woIds = woRows.map((w) => w.id);
 
-    // =========================
-    // WORK ORDERS
-    // =========================
-    const { data: workOrders, error: woErr } = await supabase
-      .from("work_orders")
-      .select("id, report_id, wo_number, title, status, cancelled_reason, completed_at")
-      .eq("report_id", reportId)
-      .order("wo_number", { ascending: true });
+  const { data: updates } = woIds.length
+    ? await supabase
+        .from("wo_updates")
+        .select("id, work_order_id, comment, photo_urls, created_at")
+        .in("work_order_id", woIds)
+        .order("created_at", { ascending: true })
+        .returns<UpdateRow[]>()
+    : { data: [] as UpdateRow[] };
 
-    if (woErr) return NextResponse.json({ error: woErr.message }, { status: 500 });
+  const updatesByWo = new Map<string, UpdateRow[]>();
+  for (const u of updates ?? []) {
+    if (!updatesByWo.has(u.work_order_id)) updatesByWo.set(u.work_order_id, []);
+    updatesByWo.get(u.work_order_id)?.push(u);
+  }
 
-    const wos = workOrders ?? [];
-    const woIds = wos.map((w) => w.id);
+  const total = woRows.length;
+  const complete = woRows.filter((w) => w.status === "complete").length;
+  const cancelled = woRows.filter((w) => w.status === "cancelled").length;
+  const open = total - complete - cancelled;
+  const completePct = pct(complete, total);
+  const openPct = pct(open, total);
+  const cancelledPct = pct(cancelled, total);
 
-    // =========================
-    // UPDATES (comments + photo paths)
-    // =========================
-    const { data: updates, error: updErr } = await supabase
-      .from("wo_updates")
-      .select("id, work_order_id, comment, photo_urls, created_at")
-      .in("work_order_id", woIds.length ? woIds : ["00000000-0000-0000-0000-000000000000"])
-      .order("created_at", { ascending: true });
+  const updatesByDate = new Map<string, number>();
+  for (const u of updates ?? []) {
+    const d = new Date(u.created_at);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    updatesByDate.set(key, (updatesByDate.get(key) ?? 0) + 1);
+  }
 
-    if (updErr) return NextResponse.json({ error: updErr.message }, { status: 500 });
+  const trendDays: Array<{ day: string; count: number }> = [];
+  const now = new Date();
+  for (let i = 6; i >= 0; i -= 1) {
+    const d = new Date(now);
+    d.setDate(now.getDate() - i);
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+    trendDays.push({ day: key, count: updatesByDate.get(key) ?? 0 });
+  }
+  const maxTrend = Math.max(...trendDays.map((x) => x.count), 1);
+  const statusMixWidths = {
+    complete: Math.max(completePct, complete > 0 ? 1 : 0),
+    open: Math.max(openPct, open > 0 ? 1 : 0),
+    cancelled: Math.max(cancelledPct, cancelled > 0 ? 1 : 0),
+  };
+  const mixSum = statusMixWidths.complete + statusMixWidths.open + statusMixWidths.cancelled;
+  if (mixSum !== 100) {
+    statusMixWidths.complete = Math.max(0, statusMixWidths.complete + (100 - mixSum));
+  }
 
-    const updatesByWo = new Map<string, any[]>();
-    for (const u of updates ?? []) {
-      const key = u.work_order_id as string;
-      if (!updatesByWo.has(key)) updatesByWo.set(key, []);
-      updatesByWo.get(key)!.push(u);
-    }
+  const header = new Header({
+    children: [
+      new Table({
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        borders: noBorders(),
+        rows: [
+          new TableRow({
+            children: [
+              new TableCell({
+                width: { size: 28, type: WidthType.PERCENTAGE },
+                borders: noBorders(),
+                children: [
+                  new Paragraph({
+                    children: logo
+                      ? [new ImageRun({ data: logo, transformation: { width: 112, height: 38 }, type: "png" })]
+                      : [new TextRun({ text: branding?.company_name ?? "Reportz", bold: true, size: 22, color: accent })],
+                  }),
+                ],
+              }),
+              new TableCell({
+                width: { size: 72, type: WidthType.PERCENTAGE },
+                borders: noBorders(),
+                verticalAlign: VerticalAlign.CENTER,
+                children: [
+                  new Paragraph({
+                    alignment: AlignmentType.RIGHT,
+                    children: [
+                      new TextRun({ text: branding?.header_text ?? "Reportz", bold: true, size: 20, color: "0F172A" }),
+                    ],
+                  }),
+                  new Paragraph({
+                    alignment: AlignmentType.RIGHT,
+                    children: [new TextRun({ text: report.name, size: 18, color: "5F6F88" })],
+                  }),
+                ],
+              }),
+            ],
+          }),
+          new TableRow({
+            children: [
+              new TableCell({
+                columnSpan: 2,
+                borders: noBorders(),
+                children: [divider("D8DEEA")],
+              }),
+            ],
+          }),
+        ],
+      }),
+    ],
+  });
 
-    // =========================
-    // DASHBOARD METRICS
-    // =========================
-    const total = wos.length;
-    const complete = wos.filter((w) => w.status === "complete").length;
-    const cancelled = wos.filter((w) => w.status === "cancelled").length;
-    const open = total - complete - cancelled;
+  const footer = new Footer({
+    children: [
+      divider("D8DEEA"),
+      new Paragraph({
+        alignment: AlignmentType.CENTER,
+        children: [
+          new TextRun({ text: branding?.footer_text ?? "Generated by Reportz", size: 17, color: "5F6F88" }),
+          new TextRun({ text: " | Page ", size: 17, color: "5F6F88" }),
+          new TextRun({ children: [PageNumber.CURRENT], size: 17, color: "5F6F88" }),
+        ],
+      }),
+    ],
+  });
 
-    // =========================
-    // HEADER (borderless)
-    // =========================
-    const header = new Header({
+  const title = [
+    new Paragraph({ spacing: { after: 900 } }),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [new TextRun({ text: branding?.company_name ?? "Reportz", bold: true, size: 48, color: accent })],
+      spacing: { after: 130 },
+    }),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [new TextRun({ text: "Shutdown Completion Report", size: 30, color: "0F172A" })],
+      spacing: { after: 180 },
+    }),
+    new Paragraph({
+      alignment: AlignmentType.CENTER,
+      children: [new TextRun({ text: report.name, bold: true, size: 36, color: "0F172A" })],
+      spacing: { after: 320 },
+    }),
+    new Table({
+      width: { size: 72, type: WidthType.PERCENTAGE },
+      alignment: AlignmentType.CENTER,
+      borders: softBorder("D8DEEA"),
+      rows: [
+        new TableRow({
+          children: [
+            new TableCell({
+              children: [
+                new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  children: [new TextRun({ text: "Date Range", bold: true, size: 18, color: "5F6F88" })],
+                }),
+                new Paragraph({
+                  alignment: AlignmentType.CENTER,
+                  children: [
+                    new TextRun({
+                      text: `${report.start_date ?? "N/A"} to ${report.end_date ?? "N/A"}`,
+                      size: 22,
+                      bold: true,
+                    }),
+                  ],
+                }),
+              ],
+            }),
+          ],
+        }),
+      ],
+    }),
+    new Paragraph({ children: [new PageBreak()] }),
+  ];
+
+  const summary = [
+    new Paragraph({
+      children: [new TextRun({ text: "Executive Summary", bold: true, size: 34, color: "0F172A" })],
+      spacing: { after: 150 },
+    }),
+    new Paragraph({
       children: [
+        new TextRun({
+          text: `This shutdown planned ${total} work orders: ${complete} completed, ${open} open, and ${cancelled} cancelled.`,
+          size: 22,
+          color: "334155",
+        }),
+      ],
+      spacing: { after: 280 },
+    }),
+    new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      borders: noBorders(),
+      rows: [
+        new TableRow({
+          children: [
+            kpiCell("Total", String(total), "F8FAFF"),
+            kpiCell("Completed", String(complete), "EAF8F0", "1B8F5A"),
+            kpiCell("Open", String(open), "FFF7E4", "B67710"),
+            kpiCell("Cancelled", String(cancelled), "FCEDEE", "B92C2C"),
+          ],
+        }),
+      ],
+    }),
+    new Paragraph({ spacing: { after: 220 } }),
+    new Paragraph({
+      children: [new TextRun({ text: "Visual Dashboard", bold: true, size: 30, color: "0F172A" })],
+      spacing: { after: 120 },
+    }),
+    new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      borders: softBorder("D8DEEA"),
+      rows: [
+        new TableRow({
+          children: [
+            new TableCell({
+              margins: { top: 140, bottom: 140, left: 180, right: 180 },
+              children: [
+                new Paragraph({
+                  children: [new TextRun({ text: "Completion", size: 18, color: "5F6F88", bold: true })],
+                  spacing: { after: 80 },
+                }),
+                horizontalBar(complete, Math.max(total, 1), "1B8F5A"),
+                new Paragraph({
+                  spacing: { before: 80 },
+                  children: [new TextRun({ text: `${completePct}% complete`, size: 18, color: "1B8F5A", bold: true })],
+                }),
+              ],
+            }),
+          ],
+        }),
+      ],
+    }),
+    new Paragraph({ spacing: { after: 100 } }),
+    new Paragraph({
+      children: [new TextRun({ text: "Status Mix", size: 22, bold: true, color: "334155" })],
+      spacing: { after: 80 },
+    }),
+    new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      borders: softBorder("D8DEEA"),
+      rows: [
+        new TableRow({
+          children: [
+            new TableCell({
+              width: { size: statusMixWidths.complete || 1, type: WidthType.PERCENTAGE },
+              shading: { type: ShadingType.CLEAR, fill: "1B8F5A" },
+              borders: noBorders(),
+              children: [new Paragraph({})],
+            }),
+            new TableCell({
+              width: { size: statusMixWidths.open || 1, type: WidthType.PERCENTAGE },
+              shading: { type: ShadingType.CLEAR, fill: "B67710" },
+              borders: noBorders(),
+              children: [new Paragraph({})],
+            }),
+            new TableCell({
+              width: { size: statusMixWidths.cancelled || 1, type: WidthType.PERCENTAGE },
+              shading: { type: ShadingType.CLEAR, fill: "B92C2C" },
+              borders: noBorders(),
+              children: [new Paragraph({})],
+            }),
+          ],
+        }),
+      ],
+    }),
+    new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      borders: noBorders(),
+      rows: [
+        new TableRow({
+          children: [
+            new TableCell({
+              borders: noBorders(),
+              children: [new Paragraph({ children: [new TextRun({ text: `Completed ${completePct}%`, color: "1B8F5A", bold: true, size: 17 })] })],
+            }),
+            new TableCell({
+              borders: noBorders(),
+              children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: `Open ${openPct}%`, color: "B67710", bold: true, size: 17 })] })],
+            }),
+            new TableCell({
+              borders: noBorders(),
+              children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: `Cancelled ${cancelledPct}%`, color: "B92C2C", bold: true, size: 17 })] })],
+            }),
+          ],
+        }),
+      ],
+    }),
+    new Paragraph({ spacing: { after: 120 } }),
+    new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      borders: noBorders(),
+      rows: [
+        statusBarRow("Completed", complete, Math.max(total, 1), "1B8F5A"),
+        statusBarRow("Open", open, Math.max(total, 1), "B67710"),
+        statusBarRow("Cancelled", cancelled, Math.max(total, 1), "B92C2C"),
+      ],
+    }),
+    new Paragraph({ spacing: { after: 120 } }),
+    new Paragraph({
+      children: [new TextRun({ text: "Update Activity (Last 7 Days)", size: 22, bold: true, color: "334155" })],
+      spacing: { after: 80 },
+    }),
+    new Table({
+      width: { size: 100, type: WidthType.PERCENTAGE },
+      borders: noBorders(),
+      rows: trendDays.map((row) =>
+        new TableRow({
+          children: [
+            new TableCell({
+              width: { size: 22, type: WidthType.PERCENTAGE },
+              borders: softBorder("E1E7F2"),
+              margins: { top: 80, bottom: 80, left: 140, right: 140 },
+              children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: row.day, size: 17, color: "5F6F88" })] })],
+            }),
+            new TableCell({
+              width: { size: 78, type: WidthType.PERCENTAGE },
+              borders: softBorder("E1E7F2"),
+              margins: { top: 80, bottom: 80, left: 140, right: 140 },
+              children: [
+                horizontalBar(row.count, maxTrend, accent, "E7EDF7"),
+                new Paragraph({
+                  spacing: { before: 80 },
+                  children: [
+                    new TextRun({
+                      text: `${row.count} updates`,
+                      size: 17,
+                      color: "334155",
+                    }),
+                  ],
+                }),
+              ],
+            }),
+          ],
+        })
+      ),
+    }),
+    new Paragraph({ children: [new PageBreak()] }),
+  ];
+
+  const detailBlocks: (Paragraph | Table)[] = [];
+
+  for (const w of woRows) {
+    const s = statusTheme(w.status);
+
+    detailBlocks.push(
+      new Paragraph({
+        children: [new TextRun({ text: `${w.wo_number} | ${w.title ?? "Untitled work order"}`, bold: true, size: 28 })],
+        spacing: { before: 100, after: 90 },
+      }),
+      new Table({
+        width: { size: 100, type: WidthType.PERCENTAGE },
+        borders: noBorders(),
+        rows: [
+          new TableRow({
+            children: [
+              new TableCell({
+                width: { size: 35, type: WidthType.PERCENTAGE },
+                borders: softBorder("D8DEEA"),
+                shading: { type: ShadingType.CLEAR, fill: s.fill },
+                margins: { top: 120, bottom: 120, left: 180, right: 180 },
+                children: [
+                  new Paragraph({
+                    children: [new TextRun({ text: `Status: ${w.status.toUpperCase()}`, bold: true, color: s.text, size: 20 })],
+                  }),
+                ],
+              }),
+              new TableCell({
+                width: { size: 65, type: WidthType.PERCENTAGE },
+                borders: softBorder("D8DEEA"),
+                margins: { top: 120, bottom: 120, left: 180, right: 180 },
+                children: [
+                  new Paragraph({
+                    children: [
+                      new TextRun({
+                        text:
+                          w.status === "cancelled"
+                            ? `Reason: ${w.cancelled_reason ?? "Not provided"}`
+                            : w.status === "complete"
+                            ? `Completed at: ${w.completed_at ? new Date(w.completed_at).toLocaleString() : "N/A"}`
+                            : "In progress",
+                        size: 20,
+                        color: "334155",
+                      }),
+                    ],
+                  }),
+                ],
+              }),
+            ],
+          }),
+        ],
+      }),
+      new Paragraph({ spacing: { after: 130 } })
+    );
+
+    const list = updatesByWo.get(w.id) ?? [];
+
+    if (!list.length) {
+      detailBlocks.push(
+        new Paragraph({
+          children: [new TextRun({ text: "No updates were logged for this work order.", italics: true, color: "5F6F88", size: 20 })],
+          spacing: { after: 180 },
+        }),
+        new Paragraph({ children: [new PageBreak()] })
+      );
+      continue;
+    }
+
+    for (const u of list) {
+      detailBlocks.push(
         new Table({
           width: { size: 100, type: WidthType.PERCENTAGE },
-          layout: "fixed",
-          borders: noBorders(),
+          borders: softBorder("D8DEEA"),
           rows: [
-            // Row 1: logo left, header text right
             new TableRow({
               children: [
                 new TableCell({
-                  width: { size: 30, type: WidthType.PERCENTAGE },
-                  margins: { top: 80, bottom: 0, left: 0, right: 0 },
-                  borders: noBorders(),
+                  margins: { top: 120, bottom: 120, left: 180, right: 180 },
                   children: [
                     new Paragraph({
-                      children: logoBuf
-                        ? [
-                            new ImageRun({
-                              data: logoBuf,
-                              transformation: { width: 110, height: 40 },
-                              type: logoType,
-                            }),
-                          ]
-                        : [],
+                      children: [new TextRun({ text: new Date(u.created_at).toLocaleString(), bold: true, size: 18, color: "5F6F88" })],
+                      spacing: { after: 90 },
                     }),
-                  ],
-                }),
-                new TableCell({
-                  width: { size: 70, type: WidthType.PERCENTAGE },
-                  margins: { top: 80, bottom: 0, left: 0, right: 0 },
-                  borders: noBorders(),
-                  children: [
                     new Paragraph({
-                      alignment: AlignmentType.RIGHT,
-                      children: [new TextRun({ text: headerText, bold: true, size: 20 })],
-                    }),
-                  ],
-                }),
-              ],
-            }),
-
-            // Row 2: centred details (one cell spanning both columns)
-            new TableRow({
-              children: [
-                new TableCell({
-                  columnSpan: 2,
-                  borders: noBorders(),
-                  margins: { top: 40, bottom: 120, left: 0, right: 0 },
-                  children: [
-                    new Paragraph({
-                      alignment: AlignmentType.CENTER,
-                      children: [
-                        new TextRun({
-                          text: `${companyName}  |  ${report.name ?? "Shutdown"}  |  ${
-                            report.start_date ?? "?"
-                          } → ${report.end_date ?? "?"}`,
-                          size: 18,
-                        }),
-                      ],
+                      children: [new TextRun({ text: u.comment || "No comment", size: 22, color: "0F172A" })],
                     }),
                   ],
                 }),
@@ -239,188 +672,48 @@ export async function GET(req: NextRequest) {
             }),
           ],
         }),
-      ],
-    });
-
-    // =========================
-    // FOOTER
-    // =========================
-    const footer = new Footer({
-      children: [
-        new Paragraph({
-          alignment: AlignmentType.CENTER,
-          children: [new TextRun({ text: footerText, size: 20 })],
-        }),
-      ],
-    });
-
-    // =========================
-    // TITLE PAGE
-    // =========================
-    const titlePage = [
-      new Paragraph({
-        text: companyName,
-        heading: HeadingLevel.HEADING_1,
-        alignment: AlignmentType.CENTER,
-        spacing: { after: 250 },
-      }),
-      new Paragraph({
-        text: "Shutdown Report",
-        heading: HeadingLevel.TITLE,
-        alignment: AlignmentType.CENTER,
-        spacing: { after: 450 },
-      }),
-      new Paragraph({
-        text: report.name ?? "Untitled Shutdown",
-        heading: HeadingLevel.HEADING_1,
-        alignment: AlignmentType.CENTER,
-        spacing: { after: 250 },
-      }),
-      new Paragraph({
-        text: `Dates: ${report.start_date ?? "?"} → ${report.end_date ?? "?"}`,
-        alignment: AlignmentType.CENTER,
-        spacing: { after: 350 },
-      }),
-      new Paragraph({
-        text: `Generated: ${new Date().toLocaleString()}`,
-        alignment: AlignmentType.CENTER,
-        spacing: { after: 200 },
-      }),
-      new Paragraph({ children: [new PageBreak()] }),
-    ];
-
-    // =========================
-    // DASHBOARD PAGE
-    // =========================
-    const dashboardTable = new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
-      rows: [
-        dashboardRow("Total Work Orders", String(total)),
-        dashboardRow("Completed", String(complete)),
-        dashboardRow("Open", String(open)),
-        dashboardRow("Cancelled", String(cancelled)),
-      ],
-    });
-
-    const dashboardPage = [
-      new Paragraph({
-        text: "Dashboard Summary",
-        heading: HeadingLevel.HEADING_1,
-        spacing: { after: 280 },
-      }),
-      dashboardTable,
-      new Paragraph({ children: [new PageBreak()] }),
-    ];
-
-    // =========================
-    // WORK ORDERS (updates + photos)
-    // =========================
-    const woContent: Paragraph[] = [
-      new Paragraph({
-        text: "Work Orders",
-        heading: HeadingLevel.HEADING_1,
-        spacing: { after: 240 },
-      }),
-    ];
-
-    for (const w of wos) {
-      woContent.push(
-        new Paragraph({
-          text: `${w.wo_number} — ${w.title || ""}`.trim(),
-          heading: HeadingLevel.HEADING_2,
-          spacing: { before: 220, after: 60 },
-        }),
-        new Paragraph({
-          children: [
-            new TextRun({ text: `Status: ${w.status}` }),
-            ...(w.status === "cancelled" && w.cancelled_reason
-              ? [new TextRun({ text: `  •  Reason: ${w.cancelled_reason}` })]
-              : []),
-          ],
-          spacing: { after: 140 },
-        })
+        new Paragraph({ spacing: { after: 100 } })
       );
 
-      const woUpdates = updatesByWo.get(w.id) ?? [];
-      if (woUpdates.length === 0) {
-        woContent.push(new Paragraph({ text: "No updates recorded.", spacing: { after: 220 } }));
-        woContent.push(new Paragraph({ children: [new PageBreak()] }));
-        continue;
-      }
+      for (const path of u.photo_urls ?? []) {
+        const buf = await file("report-photos", path);
+        if (!buf) continue;
 
-      for (const u of woUpdates) {
-        const dt = u.created_at ? new Date(u.created_at).toLocaleString() : "";
-
-        woContent.push(
+        detailBlocks.push(
           new Paragraph({
-            children: [new TextRun({ text: dt, italics: true, size: 18 })],
-            spacing: { after: 50 },
+            alignment: AlignmentType.CENTER,
+            children: [new ImageRun({ data: buf, transformation: { width: 520, height: 300 }, type: imgType(path) })],
+          }),
+          new Paragraph({
+            alignment: AlignmentType.CENTER,
+            children: [new TextRun({ text: "Site Photo", italics: true, size: 17, color: "5F6F88" })],
+            spacing: { after: 130 },
           })
         );
-
-        if (u.comment) {
-          woContent.push(new Paragraph({ text: String(u.comment), spacing: { after: 110 } }));
-        }
-
-        const photoPaths: string[] = Array.isArray(u.photo_urls) ? u.photo_urls : [];
-        for (const path of photoPaths) {
-          const buf = await downloadStorageFile("report-photos", path);
-          if (!buf) {
-            woContent.push(
-              new Paragraph({
-                text: `[Photo could not be downloaded: ${path}]`,
-                spacing: { after: 110 },
-              })
-            );
-            continue;
-          }
-
-          woContent.push(
-            new Paragraph({
-              children: [
-                new ImageRun({
-                  data: buf,
-                  transformation: { width: 520, height: 320 },
-                  type: guessImageType(path),
-                }),
-              ],
-              spacing: { after: 150 },
-            })
-          );
-        }
-
-        woContent.push(new Paragraph({ children: [new TextRun({ text: " " })], spacing: { after: 80 } }));
       }
-
-      woContent.push(new Paragraph({ children: [new PageBreak()] }));
     }
 
-    // =========================
-    // BUILD DOC
-    // =========================
-    const doc = new Document({
-      sections: [
-        {
-          properties: {},
-          headers: { default: header },
-          footers: { default: footer },
-          children: [...titlePage, ...dashboardPage, ...woContent],
-        },
-      ],
-    });
-
-    const buffer = await Packer.toBuffer(doc);
-    const fileName = safeFileName(`Report - ${report.name || "Shutdown"}`) || "Report";
-
-    return new NextResponse(buffer, {
-      headers: {
-        "Content-Type":
-          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "Content-Disposition": `attachment; filename="${fileName}.docx"`,
-      },
-    });
-  } catch (e: any) {
-    console.error(e);
-    return NextResponse.json({ error: e?.message || "Export failed" }, { status: 500 });
+    detailBlocks.push(new Paragraph({ children: [new PageBreak()] }));
   }
+
+  const doc = new Document({
+    sections: [
+      {
+        properties: { page: { margin: { top: 800, right: 800, bottom: 900, left: 800 } } },
+        headers: { default: header },
+        footers: { default: footer },
+        children: [...title, ...summary, ...detailBlocks],
+      },
+    ],
+  });
+
+  const buf = await Packer.toBuffer(doc);
+  const body = new Uint8Array(buf);
+
+  return new NextResponse(body, {
+    headers: {
+      "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "Content-Disposition": `attachment; filename="${safe(report.name)}.docx"`,
+    },
+  });
 }

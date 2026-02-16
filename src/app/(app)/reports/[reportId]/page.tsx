@@ -23,13 +23,7 @@ export default function ReportDetailPage() {
   const [loading, setLoading] = useState(true);
   const [report, setReport] = useState<ReportRow | null>(null);
   const [err, setErr] = useState<string | null>(null);
-<button
-  onClick={() =>
-    window.open(`/api/export-report?reportId=${report.id}`, "_blank")
-  }
->
-  Export Word Report
-</button>
+
   useEffect(() => {
     async function load() {
       if (!reportId) return;
@@ -56,55 +50,82 @@ export default function ReportDetailPage() {
     load();
   }, [reportId, supabase]);
 
-  if (!reportId) return <p>Missing report id.</p>;
-  if (loading) return <p>Loading report...</p>;
+  if (!reportId) return <p className="muted">Missing report id.</p>;
+  if (loading) return <p className="muted">Loading report...</p>;
 
   if (err) {
     return (
-      <div>
+      <div className="section-card" style={{ maxWidth: 760 }}>
         <h1>Report</h1>
-        <p style={{ color: "tomato" }}>{err}</p>
-        <p style={{ opacity: 0.8 }}>
-          If this says “No rows”, the report id might be wrong. If it says “permission denied”,
-          your profile tenant_id/role or RLS might be blocking access.
+        <p className="error-text" style={{ marginTop: "0.65rem" }}>
+          {err}
         </p>
-        <Link href="/reports">Back to reports</Link>
+        <p className="muted">
+          If this says no rows, the report id might be wrong. If it says permission denied, your profile
+          tenant_id, role, or RLS may be blocking access.
+        </p>
+        <Link className="btn btn-soft" href="/reports">
+          Back to reports
+        </Link>
       </div>
     );
   }
 
   if (!report) {
     return (
-      <div>
+      <div className="section-card" style={{ maxWidth: 760 }}>
         <h1>Report not found</h1>
-        <Link href="/reports">Back to reports</Link>
+        <div style={{ marginTop: "0.8rem" }}>
+          <Link className="btn btn-soft" href="/reports">
+            Back to reports
+          </Link>
+        </div>
       </div>
     );
   }
 
+  const statusClass =
+    report.status === "complete" ? "status-complete" : report.status === "cancelled" ? "status-cancelled" : "status-open";
+
   return (
-    <div style={{ maxWidth: 760 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h1 style={{ margin: 0 }}>{report.name}</h1>
-        <button onClick={() => router.push("/reports")}>Back</button>
-      </div>
+    <div className="grid" style={{ maxWidth: 920 }}>
+      <div className="section-card grid">
+        <div className="title-row">
+          <div className="grid" style={{ gap: "0.45rem" }}>
+            <h1>{report.name}</h1>
+            <div className="muted">
+              Dates: {report.start_date ?? "?"} {"->"} {report.end_date ?? "?"}
+            </div>
+          </div>
 
-      <div style={{ marginTop: 10, opacity: 0.85 }}>
-        <div>
-          Dates: {report.start_date ?? "?"} → {report.end_date ?? "?"}
+          <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
+            <span className={`status ${statusClass}`}>{report.status}</span>
+            <button className="btn btn-soft" onClick={() => router.push("/reports")}>
+              Back
+            </button>
+          </div>
         </div>
-        <div>Status: {report.status}</div>
+
+        <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
+          <Link className="btn btn-primary" href={`/reports/${report.id}/import`}>
+            Import Work Orders
+          </Link>
+          <Link className="btn btn-soft" href={`/reports/${report.id}/work-orders`}>
+            Work Orders
+          </Link>
+          <Link className="btn btn-soft" href={`/reports/${report.id}/exports`}>
+            Exports
+          </Link>
+          <button
+            className="btn"
+            onClick={() => window.open(`/api/export-report?reportId=${report.id}`, "_blank")}
+          >
+            Export Word
+          </button>
+        </div>
       </div>
 
-      <div style={{ marginTop: 18, display: "flex", gap: 12, flexWrap: "wrap" }}>
-        <Link href={`/reports/${report.id}/import`}>Import Work Orders</Link>
-        <Link href={`/reports/${report.id}/work-orders`}>Work Orders</Link>
-        <Link href={`/reports/${report.id}/exports`}>Exports</Link>
-      </div>
-
-      <div style={{ marginTop: 18, padding: 12, border: "1px solid #333", borderRadius: 10 }}>
-        <strong>Next:</strong> we’ll add pages for Import / Work Orders / Exports.
-      </div>
+      <div className="section-card muted">Track imports, updates, and exports for this shutdown report.</div>
     </div>
   );
 }

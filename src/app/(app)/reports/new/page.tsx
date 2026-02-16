@@ -16,7 +16,6 @@ export default function NewReportPage() {
     setLoading(true);
     setMsg(null);
 
-    // Fetch profile to get tenant_id (client-side)
     const { data: userRes } = await supabase.auth.getUser();
     const user = userRes.user;
     if (!user) {
@@ -61,30 +60,36 @@ export default function NewReportPage() {
   }
 
   return (
-    <div style={{ maxWidth: 520 }}>
-      <h1 style={{ marginTop: 0 }}>New report</h1>
-      <form onSubmit={createReport} style={{ display: "grid", gap: 12 }}>
-        <input
-          placeholder="Shutdown name (e.g., Y26 Wk04 Mill Shutdown)"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          style={{ padding: 10 }}
-          required
-        />
-        <label style={{ display: "grid", gap: 6 }}>
-          <span style={{ fontSize: 12, opacity: 0.8 }}>Start date</span>
-          <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={{ padding: 10 }} />
-        </label>
-        <label style={{ display: "grid", gap: 6 }}>
-          <span style={{ fontSize: 12, opacity: 0.8 }}>End date</span>
-          <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} style={{ padding: 10 }} />
+    <div className="section-card" style={{ maxWidth: 640 }}>
+      <h1 style={{ marginBottom: "0.8rem" }}>New report</h1>
+
+      <form onSubmit={createReport} className="grid">
+        <label className="field">
+          <span className="label">Shutdown name</span>
+          <input
+            className="input"
+            placeholder="Y26 Wk04 Mill Shutdown"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            required
+          />
         </label>
 
-        <button disabled={loading} style={{ padding: 10, fontWeight: 800 }}>
+        <label className="field">
+          <span className="label">Start date</span>
+          <input className="input" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+        </label>
+
+        <label className="field">
+          <span className="label">End date</span>
+          <input className="input" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+        </label>
+
+        <button className="btn btn-primary" disabled={loading}>
           {loading ? "Creating..." : "Create report"}
         </button>
 
-        {msg ? <p style={{ color: "tomato" }}>{msg}</p> : null}
+        {msg ? <p className="error-text">{msg}</p> : null}
       </form>
     </div>
   );

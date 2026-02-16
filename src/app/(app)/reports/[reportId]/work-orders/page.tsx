@@ -45,46 +45,55 @@ export default function WorkOrdersPage() {
   }, [reportId]);
 
   return (
-    <div style={{ maxWidth: 900 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h1 style={{ margin: 0 }}>Work Orders</h1>
-        <div style={{ display: "flex", gap: 12 }}>
-          <Link href={`/reports/${reportId}`}>Report</Link>
-          <Link href={`/reports/${reportId}/import`}>Import</Link>
+    <div className="grid" style={{ maxWidth: 940 }}>
+      <div className="title-row">
+        <h1>Work Orders</h1>
+        <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
+          <Link className="btn btn-soft" href={`/reports/${reportId}`}>
+            Report
+          </Link>
+          <Link className="btn btn-primary" href={`/reports/${reportId}/import`}>
+            Import
+          </Link>
         </div>
       </div>
 
-      {loading ? <p>Loading…</p> : null}
-      {err ? <p style={{ color: "tomato" }}>{err}</p> : null}
+      {loading ? <p className="muted">Loading...</p> : null}
+      {err ? <p className="error-text">{err}</p> : null}
 
-      <div style={{ marginTop: 16, display: "grid", gap: 10 }}>
+      <div className="grid">
         {workOrders.map((wo) => (
-          <Link
-            key={wo.id}
-            href={`/reports/${reportId}/work-orders/${wo.id}`}
-            style={{
-              display: "block",
-              padding: 12,
-              border: "1px solid #333",
-              borderRadius: 10,
-              textDecoration: "none",
-              color: "inherit",
-            }}
-          >
-            <div style={{ fontWeight: 900 }}>
-              {wo.wo_number} — {wo.title}
-            </div>
-            <div style={{ opacity: 0.8, fontSize: 12 }}>
-              Status: {wo.status}
-              {wo.status === "cancelled" && wo.cancelled_reason ? ` • ${wo.cancelled_reason}` : ""}
+          <Link key={wo.id} href={`/reports/${reportId}/work-orders/${wo.id}`} className="wo-list-item">
+            <div className="title-row" style={{ alignItems: "flex-start" }}>
+              <div>
+                <div style={{ fontWeight: 700 }}>
+                  {wo.wo_number} - {wo.title}
+                </div>
+                <div className="muted" style={{ fontSize: "0.85rem", marginTop: "0.25rem" }}>
+                  {wo.status === "cancelled" && wo.cancelled_reason
+                    ? `Cancelled: ${wo.cancelled_reason}`
+                    : "Tap to view details and updates"}
+                </div>
+              </div>
+
+              <span
+                className={`status ${
+                  wo.status === "complete"
+                    ? "status-complete"
+                    : wo.status === "cancelled"
+                    ? "status-cancelled"
+                    : "status-open"
+                }`}
+              >
+                {wo.status}
+              </span>
             </div>
           </Link>
         ))}
 
         {!loading && workOrders.length === 0 ? (
-          <p style={{ opacity: 0.8 }}>
-            No work orders found. Import them first via{" "}
-            <Link href={`/reports/${reportId}/import`}>Import</Link>.
+          <p className="muted">
+            No work orders found. Import them first via <Link href={`/reports/${reportId}/import`}>Import</Link>.
           </p>
         ) : null}
       </div>

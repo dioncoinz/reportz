@@ -23,27 +23,34 @@ export default function LoginPage() {
   }
 
   return (
-    <div style={{ maxWidth: 420, margin: "80px auto", padding: 16 }}>
-      <h1 style={{ marginTop: 0 }}>Login</h1>
-      <form onSubmit={onLogin} style={{ display: "grid", gap: 12 }}>
-        <input
-          placeholder="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          style={{ padding: 10 }}
-        />
-        <input
-          placeholder="password"
-          type="password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          style={{ padding: 10 }}
-        />
-        <button disabled={loading} style={{ padding: 10, fontWeight: 700 }}>
-          {loading ? "Signing in..." : "Sign in"}
-        </button>
-        {msg ? <p style={{ color: "tomato" }}>{msg}</p> : null}
-      </form>
+    <div className="container" style={{ padding: "3rem 0" }}>
+      <div className="section-card" style={{ maxWidth: 460, margin: "0 auto" }}>
+        <h1 style={{ marginBottom: "0.9rem" }}>Sign in</h1>
+
+        <form onSubmit={onLogin} className="grid">
+          <label className="field">
+            <span className="label">Email</span>
+            <input className="input" placeholder="you@company.com" value={email} onChange={(e) => setEmail(e.target.value)} />
+          </label>
+
+          <label className="field">
+            <span className="label">Password</span>
+            <input
+              className="input"
+              placeholder="Password"
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+            />
+          </label>
+
+          <button className="btn btn-primary" disabled={loading}>
+            {loading ? "Signing in..." : "Sign in"}
+          </button>
+
+          {msg ? <p className="error-text">{msg}</p> : null}
+        </form>
+      </div>
     </div>
   );
 }

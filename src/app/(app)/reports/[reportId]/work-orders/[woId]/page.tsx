@@ -33,12 +33,14 @@ export default function WorkOrderDetailPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
+  const [allWos, setAllWos] = useState<Pick<WorkOrder, "id" | "status">[]>([]);
+
   const [comment, setComment] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-
   const [signedMap, setSignedMap] = useState<Record<string, string>>({});
+  const [cancelReason, setCancelReason] = useState("");
 
   async function load() {
     setLoading(true);
@@ -56,6 +58,13 @@ export default function WorkOrderDetailPage() {
       return;
     }
 
+    const { data: allData, error: allErr } = await supabase
+      .from("work_orders")
+      .select("id, status")
+      .eq("report_id", woData.report_id);
+
+    if (!allErr) setAllWos((allData ?? []) as Pick<WorkOrder, "id" | "status">[]);
+
     const { data: updData, error: updErr } = await supabase
       .from("wo_updates")
       .select("id, work_order_id, created_by, comment, photo_urls, created_at")
@@ -65,6 +74,7 @@ export default function WorkOrderDetailPage() {
     if (updErr) setErr(updErr.message);
 
     setWo(woData as WorkOrder);
+    setCancelReason(woData.cancelled_reason ?? "");
     setUpdates((updData ?? []) as UpdateRow[]);
     setLoading(false);
   }
@@ -74,35 +84,69 @@ export default function WorkOrderDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [woId]);
 
-  // Gather unique photo paths
   const allPhotoPaths = useMemo(() => {
     const paths: string[] = [];
     for (const u of updates) for (const p of u.photo_urls ?? []) paths.push(p);
     return Array.from(new Set(paths));
   }, [updates]);
 
-  // Create signed URLs for private bucket display
   useEffect(() => {
     async function signMissing() {
-      const missing = allPhotoPaths.filter((p) => !signedMap[p]);
-      if (missing.length === 0) return;
-
       const next: Record<string, string> = { ...signedMap };
+      const missing = allPhotoPaths.filter((p) => !next[p]);
 
       for (const path of missing) {
-        const { data, error } = await supabase.storage
-          .from("report-photos")
-          .createSignedUrl(path, 60 * 60);
+        const { data, error } = await supabase.storage.from("report-photos").createSignedUrl(path, 60 * 60);
 
         if (!error && data?.signedUrl) next[path] = data.signedUrl;
       }
 
-      setSignedMap(next);
+      if (missing.length) setSignedMap(next);
     }
 
     signMissing();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allPhotoPaths]);
+
+  const total = allWos.length;
+  const completed = allWos.filter((w) => w.status === "complete").length;
+  const cancelled = allWos.filter((w) => w.status === "cancelled").length;
+  const open = total - completed - cancelled;
+  const pct = total === 0 ? 0 : Math.round((completed / total) * 100);
+
+  async function updateStatus(status: WorkOrder["status"]) {
+    if (!wo) return;
+
+    const { error } = await supabase
+      .from("work_orders")
+      .update({
+        status,
+        completed_at: status === "complete" ? new Date().toISOString() : null,
+        cancelled_reason: status !== "cancelled" ? null : wo.cancelled_reason,
+      })
+      .eq("id", wo.id);
+
+    if (error) {
+      setErr(error.message);
+      return;
+    }
+
+    await load();
+  }
+
+  async function saveReason(reason: string) {
+    if (!wo) return;
+
+    const { error } = await supabase.from("work_orders").update({ cancelled_reason: reason }).eq("id", wo.id);
+
+    if (error) {
+      setErr(error.message);
+      return;
+    }
+
+    setWo({ ...wo, cancelled_reason: reason });
+    setMsg("Reason saved");
+  }
 
   async function addUpdate() {
     setSaving(true);
@@ -118,7 +162,6 @@ export default function WorkOrderDetailPage() {
       return;
     }
 
-    // Upload photos
     const photoPaths: string[] = [];
 
     for (const file of files) {
@@ -139,7 +182,6 @@ export default function WorkOrderDetailPage() {
       photoPaths.push(path);
     }
 
-    // Insert update
     const { error: insErr } = await supabase.from("wo_updates").insert({
       work_order_id: woId,
       created_by: user.id,
@@ -155,146 +197,169 @@ export default function WorkOrderDetailPage() {
 
     setComment("");
     setFiles([]);
-    setMsg("✅ Update added");
+    setMsg("Update added");
     setSaving(false);
     await load();
   }
 
-  if (loading) return <p>Loading…</p>;
+  if (loading) return <p className="muted">Loading...</p>;
 
   if (err) {
     return (
-      <div style={{ padding: 16 }}>
-        <p style={{ color: "tomato" }}>{err}</p>
-        <button onClick={() => router.back()}>Back</button>
+      <div className="section-card" style={{ maxWidth: 900 }}>
+        <p className="error-text">{err}</p>
+        <button className="btn btn-soft" onClick={() => router.back()}>
+          Back
+        </button>
       </div>
     );
   }
 
-  if (!wo) return <p>Not found.</p>;
+  if (!wo) return <p className="muted">Not found.</p>;
+
+  const statusClass =
+    wo.status === "complete" ? "status-complete" : wo.status === "cancelled" ? "status-cancelled" : "status-open";
 
   return (
-    <div style={{ maxWidth: 900 }}>
-      <button onClick={() => router.back()} style={{ marginBottom: 12 }}>
-        ← Back
+    <div className="grid" style={{ maxWidth: 940 }}>
+      <button className="btn btn-soft" onClick={() => router.back()} style={{ width: "fit-content" }}>
+        Back
       </button>
 
-      <h1 style={{ margin: 0 }}>
-        {wo.wo_number} — {wo.title}
-      </h1>
-      <div style={{ opacity: 0.8, fontSize: 12, marginTop: 6 }}>
-        Status: {wo.status}
-        {wo.status === "cancelled" && wo.cancelled_reason ? ` • Reason: ${wo.cancelled_reason}` : ""}
+      <div className="section-card grid" style={{ gap: "0.75rem" }}>
+        <div className="title-row">
+          <h1>
+            {wo.wo_number} - {wo.title}
+          </h1>
+          <span className={`status ${statusClass}`}>{wo.status}</span>
+        </div>
+
+        <div className="title-row" style={{ alignItems: "center" }}>
+          <div className="muted" style={{ fontSize: "0.9rem" }}>
+            {completed} complete | {open} open | {cancelled} cancelled | {total} total
+          </div>
+          <div className="muted" style={{ fontSize: "0.9rem", fontWeight: 600 }}>
+            {pct}% complete
+          </div>
+        </div>
+
+        <div className="progress-track">
+          <div className="progress-fill" style={{ width: `${pct}%` }} />
+        </div>
+
+        <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
+          <span className="label">Actions</span>
+          <button
+            className={`btn ${wo.status === "open" ? "btn-active" : "btn-soft"}`}
+            onClick={() => updateStatus("open")}
+            disabled={wo.status === "open"}
+          >
+            Mark Open
+          </button>
+          <button
+            className={`btn ${wo.status === "complete" ? "btn-active" : "btn-soft"}`}
+            onClick={() => updateStatus("complete")}
+            disabled={wo.status === "complete"}
+          >
+            Mark Complete
+          </button>
+          <button
+            className={`btn ${wo.status === "cancelled" ? "btn-active" : "btn-soft"}`}
+            onClick={() => updateStatus("cancelled")}
+            disabled={wo.status === "cancelled"}
+          >
+            Mark Cancelled
+          </button>
+        </div>
+
+        {wo.status === "cancelled" ? (
+          <div className="grid" style={{ gap: "0.55rem" }}>
+            <textarea
+              className="textarea"
+              placeholder="Reason for cancellation..."
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              rows={2}
+            />
+            <div>
+              <button className="btn btn-soft" onClick={() => saveReason(cancelReason)}>
+                Save reason
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
 
-      <div style={{ marginTop: 16, padding: 12, border: "1px solid #333", borderRadius: 10 }}>
-        <h3 style={{ marginTop: 0 }}>Add update</h3>
+      <div className="section-card grid" style={{ gap: "0.75rem" }}>
+        <h3>Add update</h3>
 
         <textarea
+          className="textarea"
           value={comment}
           onChange={(e) => setComment(e.target.value)}
           placeholder="Write a comment..."
           rows={4}
-          style={{ width: "100%", padding: 10, resize: "vertical" }}
         />
 
-        <div style={{ marginTop: 10 }}>
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-  {/* Take photo (camera) */}
-  <label
-    style={{
-      display: "inline-block",
-      padding: "10px 12px",
-      border: "1px solid #333",
-      borderRadius: 10,
-      cursor: "pointer",
-      fontWeight: 700,
-    }}
-  >
-    📷 Take photo
-    <input
-      type="file"
-      accept="image/*"
-      capture="environment"
-      style={{ display: "none" }}
-      onChange={(e) => {
-        const picked = Array.from(e.target.files ?? []);
-        if (picked.length) setFiles((prev) => [...prev, ...picked]);
-        e.currentTarget.value = ""; // allow taking same photo twice
-      }}
-    />
-  </label>
+        <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", alignItems: "center" }}>
+          <label className="btn btn-soft" style={{ cursor: "pointer" }}>
+            Take photo
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const picked = Array.from(e.target.files ?? []);
+                if (picked.length) setFiles((prev) => [...prev, ...picked]);
+                e.currentTarget.value = "";
+              }}
+            />
+          </label>
 
-  {/* Choose from gallery (multiple) */}
-  <label
-    style={{
-      display: "inline-block",
-      padding: "10px 12px",
-      border: "1px solid #333",
-      borderRadius: 10,
-      cursor: "pointer",
-      fontWeight: 700,
-    }}
-  >
-    🖼️ Add photos
-    <input
-      type="file"
-      multiple
-      accept="image/*"
-      style={{ display: "none" }}
-      onChange={(e) => {
-        const picked = Array.from(e.target.files ?? []);
-        if (picked.length) setFiles((prev) => [...prev, ...picked]);
-        e.currentTarget.value = "";
-      }}
-    />
-  </label>
+          <label className="btn btn-soft" style={{ cursor: "pointer" }}>
+            Add photos
+            <input
+              type="file"
+              multiple
+              accept="image/*"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const picked = Array.from(e.target.files ?? []);
+                if (picked.length) setFiles((prev) => [...prev, ...picked]);
+                e.currentTarget.value = "";
+              }}
+            />
+          </label>
 
-  <div style={{ opacity: 0.75, fontSize: 12, alignSelf: "center" }}>
-    Selected: {files.length}
-  </div>
-</div>
-          <div style={{ opacity: 0.7, fontSize: 12, marginTop: 6 }}>
-            Tip: take photos on phone, upload here.
-          </div>
+          <span className="muted">Selected: {files.length}</span>
         </div>
 
-        <div style={{ marginTop: 12, display: "flex", gap: 12, alignItems: "center" }}>
-          <button onClick={addUpdate} disabled={saving || (!comment.trim() && files.length === 0)}>
-            {saving ? "Saving…" : "Add update"}
+        <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
+          <button className="btn btn-primary" onClick={addUpdate} disabled={saving || (!comment.trim() && files.length === 0)}>
+            {saving ? "Saving..." : "Add update"}
           </button>
-          {msg ? <span style={{ opacity: 0.9 }}>{msg}</span> : null}
+          {msg ? <span className="muted">{msg}</span> : null}
         </div>
       </div>
 
-      <h3 style={{ marginTop: 18 }}>Updates</h3>
+      <div className="grid">
+        <h3>Updates</h3>
 
-      <div style={{ display: "grid", gap: 12 }}>
         {updates.map((u) => (
-          <div key={u.id} style={{ border: "1px solid #333", borderRadius: 10, padding: 12 }}>
-            <div style={{ opacity: 0.7, fontSize: 12 }}>
+          <div key={u.id} className="section-card" style={{ padding: "0.85rem" }}>
+            <div className="muted" style={{ fontSize: "0.78rem" }}>
               {new Date(u.created_at).toLocaleString()}
             </div>
 
-            {u.comment ? <div style={{ marginTop: 6 }}>{u.comment}</div> : null}
+            {u.comment ? <div style={{ marginTop: "0.45rem" }}>{u.comment}</div> : null}
 
             {u.photo_urls?.length ? (
-              <div style={{ marginTop: 10, display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <div className="photo-grid" style={{ marginTop: "0.65rem" }}>
                 {u.photo_urls.map((path) => (
                   <a key={path} href={signedMap[path] || "#"} target="_blank" rel="noreferrer">
                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img
-                      src={signedMap[path] || ""}
-                      alt="WO photo"
-                      style={{
-                        width: 180,
-                        height: 120,
-                        objectFit: "cover",
-                        borderRadius: 8,
-                        border: "1px solid #222",
-                        background: "#111",
-                      }}
-                    />
+                    <img src={signedMap[path] || ""} alt="WO photo" className="photo-thumb" />
                   </a>
                 ))}
               </div>
@@ -302,7 +367,7 @@ export default function WorkOrderDetailPage() {
           </div>
         ))}
 
-        {updates.length === 0 ? <p style={{ opacity: 0.8 }}>No updates yet. Add the first one above.</p> : null}
+        {updates.length === 0 ? <p className="muted">No updates yet. Add the first one above.</p> : null}
       </div>
     </div>
   );

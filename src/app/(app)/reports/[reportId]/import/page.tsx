@@ -32,35 +32,45 @@ export default function ImportPage() {
     if (!res.ok) {
       setMsg(json.error);
     } else {
-      setMsg(`✅ Imported ${json.inserted} work orders`);
+      setMsg(`Imported ${json.inserted} work orders`);
     }
   }
 
   return (
-    <div style={{ maxWidth: 600 }}>
+    <div className="grid" style={{ maxWidth: 760 }}>
       <h1>Import Work Orders</h1>
 
-      <p>Excel format must be:</p>
+      <div className="section-card grid">
+        <p className="muted" style={{ margin: 0 }}>
+          Excel format:
+        </p>
 
-      <pre>
+        <pre
+          style={{
+            margin: 0,
+            padding: "0.85rem",
+            borderRadius: 12,
+            border: "1px solid var(--border)",
+            background: "var(--surface-soft)",
+            overflowX: "auto",
+          }}
+        >
 WO Number | Title
 12345     | Replace Pump
 67890     | Inspect Conveyor
-      </pre>
+        </pre>
 
-      <input
-        type="file"
-        accept=".xlsx"
-        onChange={(e) => setFile(e.target.files?.[0] ?? null)}
-      />
+        <input type="file" accept=".xlsx" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
 
-      <div style={{ marginTop: 12 }}>
-        <button onClick={upload} disabled={!file || loading}>
-          {loading ? "Uploading..." : "Upload"}
-        </button>
+        <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
+          <button className="btn btn-primary" onClick={upload} disabled={!file || loading}>
+            {loading ? "Uploading..." : "Upload"}
+          </button>
+          {file ? <span className="muted">{file.name}</span> : null}
+        </div>
       </div>
 
-      {msg && <p style={{ marginTop: 12 }}>{msg}</p>}
+      {msg ? <p className={msg.toLowerCase().includes("fail") || msg.toLowerCase().includes("error") ? "error-text" : "muted"}>{msg}</p> : null}
     </div>
   );
 }

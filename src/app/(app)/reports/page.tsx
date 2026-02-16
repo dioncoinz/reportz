@@ -42,45 +42,54 @@ export default function ReportsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profileLoading]);
 
-  if (profileLoading) return <p>Loading profile...</p>;
+  if (profileLoading) return <p className="muted">Loading profile...</p>;
 
   if (!profile?.tenant_id) {
     return (
-      <div>
+      <div className="section-card" style={{ maxWidth: 720 }}>
         <h2>Your tenant is not set</h2>
-        <p>
-          In Supabase → Table Editor → <code>profiles</code>, set your{" "}
-          <code>tenant_id</code>.
+        <p className="muted">
+          In Supabase {"->"} Table Editor {"->"} <code>profiles</code>, set your <code>tenant_id</code>.
         </p>
       </div>
     );
   }
 
   return (
-    <div>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <h1 style={{ margin: 0 }}>Reports</h1>
-        <Link href="/reports/new">+ New report</Link>
+    <div className="grid" style={{ maxWidth: 920 }}>
+      <div className="title-row">
+        <h1>Reports</h1>
+        <Link className="btn btn-primary" href="/reports/new">
+          New report
+        </Link>
       </div>
 
-      {loading ? <p>Loading reports...</p> : null}
-      {err ? <p style={{ color: "tomato" }}>{err}</p> : null}
+      {loading ? <p className="muted">Loading reports...</p> : null}
+      {err ? <p className="error-text">{err}</p> : null}
 
-      <div style={{ marginTop: 16, display: "grid", gap: 10 }}>
+      <div className="grid">
         {reports.map((r) => (
-          <div key={r.id} style={{ border: "1px solid #333", borderRadius: 10, padding: 12 }}>
-            <div style={{ fontWeight: 800 }}>{r.name}</div>
-            <div style={{ opacity: 0.8, fontSize: 12 }}>
-              {r.start_date ?? "?"} → {r.end_date ?? "?"} • {r.status}
+          <div key={r.id} className="section-card">
+            <div className="title-row">
+              <h3>{r.name}</h3>
+              <span className={`status status-${r.status === "complete" ? "complete" : r.status === "cancelled" ? "cancelled" : "open"}`}>
+                {r.status}
+              </span>
             </div>
-            <div style={{ marginTop: 8 }}>
-              <Link href={`/reports/${r.id}`}>Open</Link>
+
+            <p className="muted" style={{ margin: "0.5rem 0 0" }}>
+              {r.start_date ?? "?"} {"->"} {r.end_date ?? "?"}
+            </p>
+
+            <div style={{ marginTop: "0.9rem" }}>
+              <Link className="btn btn-soft" href={`/reports/${r.id}`}>
+                Open report
+              </Link>
             </div>
           </div>
         ))}
-        {!loading && reports.length === 0 ? (
-          <p style={{ opacity: 0.8 }}>No reports yet. Create your first one.</p>
-        ) : null}
+
+        {!loading && reports.length === 0 ? <p className="muted">No reports yet. Create your first one.</p> : null}
       </div>
     </div>
   );
