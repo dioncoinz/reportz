@@ -42,7 +42,7 @@ export default function ImportPage() {
 
       <div className="section-card grid">
         <p className="muted" style={{ margin: 0 }}>
-          Excel format:
+          Excel format (2 columns only):
         </p>
 
         <pre
@@ -55,9 +55,7 @@ export default function ImportPage() {
             overflowX: "auto",
           }}
         >
-WO Number | Title
-12345     | Replace Pump
-67890     | Inspect Conveyor
+WO Number | WO Header
         </pre>
 
         <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
