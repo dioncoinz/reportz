@@ -60,13 +60,23 @@ WO Number | Title
 67890     | Inspect Conveyor
         </pre>
 
-        <input type="file" accept=".xlsx" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+        <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
+          <label className="btn btn-soft" style={{ cursor: "pointer" }}>
+            Choose file
+            <input
+              type="file"
+              accept=".xlsx"
+              style={{ display: "none" }}
+              onChange={(e) => setFile(e.target.files?.[0] ?? null)}
+            />
+          </label>
+          {file ? <span className="muted">{file.name}</span> : <span className="muted">No file selected</span>}
+        </div>
 
         <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
           <button className="btn btn-primary" onClick={upload} disabled={!file || loading}>
             {loading ? "Uploading..." : "Upload"}
           </button>
-          {file ? <span className="muted">{file.name}</span> : null}
         </div>
       </div>
 

@@ -172,6 +172,10 @@ h3 {
   color: var(--danger);
 }
 
+.status-archived {
+  color: #64748b;
+}
+
 .grid {
   display: grid;
   gap: 0.85rem;
@@ -228,6 +232,12 @@ h3 {
 .btn-active {
   background: color-mix(in srgb, var(--accent) 16%, var(--surface));
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+}
+
+.btn-danger {
+  background: color-mix(in srgb, var(--danger) 12%, var(--surface));
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+  color: #8f1f1f;
 }
 
 .field {

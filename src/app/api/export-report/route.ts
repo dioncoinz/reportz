@@ -2,25 +2,7 @@ export const runtime = "nodejs";
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import {
-  AlignmentType,
-  BorderStyle,
-  Document,
-  Footer,
-  Header,
-  ImageRun,
-  Packer,
-  PageBreak,
-  PageNumber,
-  Paragraph,
-  ShadingType,
-  Table,
-  TableCell,
-  TableRow,
-  TextRun,
-  VerticalAlign,
-  WidthType,
-} from "docx";
+import PptxGenJS from "pptxgenjs";
 
 type ReportRow = {
   id: string;
@@ -43,7 +25,7 @@ type WorkOrderRow = {
   id: string;
   wo_number: string;
   title: string | null;
-  status: "open" | "complete" | "cancelled";
+  status: "open" | "complete" | "cancelled" | "archived";
   cancelled_reason: string | null;
   completed_at: string | null;
 };
@@ -56,10 +38,10 @@ type UpdateRow = {
   created_at: string;
 };
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+const ISSUE_PREFIX = "__ISSUE__:";
+const NEXT_SHUT_PREFIX = "__NEXT_SHUT__:";
+
+const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
 function safe(name: string) {
   return name.replace(/[<>:"/\\|?*]/g, "").slice(0, 80);
@@ -70,39 +52,16 @@ function normalizeHex(raw: string | null | undefined, fallback = "C7662D") {
   return /^[0-9A-Fa-f]{6}$/.test(cleaned) ? cleaned.toUpperCase() : fallback;
 }
 
-function noBorders() {
-  return {
-    top: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
-    bottom: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
-    left: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
-    right: { style: BorderStyle.NONE, size: 0, color: "FFFFFF" },
-  };
+function pct(part: number, whole: number) {
+  if (!whole) return 0;
+  return Math.round((part / whole) * 100);
 }
 
-function softBorder(color = "D8DEEA") {
-  return {
-    top: { style: BorderStyle.SINGLE, size: 1, color },
-    bottom: { style: BorderStyle.SINGLE, size: 1, color },
-    left: { style: BorderStyle.SINGLE, size: 1, color },
-    right: { style: BorderStyle.SINGLE, size: 1, color },
-  };
-}
-
-function divider(color = "D8DEEA") {
-  return new Paragraph({
-    border: {
-      bottom: {
-        style: BorderStyle.SINGLE,
-        size: 3,
-        color,
-      },
-    },
-    spacing: { after: 220 },
-  });
-}
-
-function imgType(path: string): "png" | "jpg" {
-  return path.toLowerCase().endsWith(".png") ? "png" : "jpg";
+function imageMimeFromPath(path: string) {
+  const p = path.toLowerCase();
+  if (p.endsWith(".png")) return "image/png";
+  if (p.endsWith(".webp")) return "image/webp";
+  return "image/jpeg";
 }
 
 async function file(bucket: string, path: string) {
@@ -111,107 +70,36 @@ async function file(bucket: string, path: string) {
   return Buffer.from(await data.arrayBuffer());
 }
 
-function statusTheme(status: WorkOrderRow["status"]) {
-  if (status === "complete") return { text: "1B8F5A", fill: "EAF8F0" };
-  if (status === "cancelled") return { text: "B92C2C", fill: "FCEDEE" };
-  return { text: "B67710", fill: "FFF7E4" };
+function asDataUri(buf: Buffer, mime: string) {
+  return `data:${mime};base64,${buf.toString("base64")}`;
 }
 
-function kpiCell(label: string, value: string, fill: string, color = "0F172A") {
-  return new TableCell({
-    verticalAlign: VerticalAlign.CENTER,
-    shading: { type: ShadingType.CLEAR, fill },
-    borders: softBorder("D8DEEA"),
-    margins: { top: 200, bottom: 200, left: 220, right: 220 },
-    children: [
-      new Paragraph({
-        children: [new TextRun({ text: label.toUpperCase(), size: 18, color: "5F6F88", bold: true })],
-        spacing: { after: 120 },
-      }),
-      new Paragraph({
-        children: [new TextRun({ text: value, size: 42, bold: true, color })],
-      }),
-    ],
-  });
+function statusColor(status: WorkOrderRow["status"]) {
+  if (status === "complete") return "1B8F5A";
+  if (status === "cancelled") return "B92C2C";
+  if (status === "archived") return "64748B";
+  return "B67710";
 }
 
-function pct(part: number, whole: number) {
-  if (!whole) return 0;
-  return Math.round((part / whole) * 100);
+function getEntryKind(comment: string | null): "comments" | "issues" | "next" {
+  if (!comment) return "comments";
+  if (comment.startsWith(ISSUE_PREFIX)) return "issues";
+  if (comment.startsWith(NEXT_SHUT_PREFIX)) return "next";
+  return "comments";
 }
 
-function horizontalBar(value: number, max: number, fill = "1B8F5A", empty = "E7EDF7") {
-  const percent = Math.max(0, Math.min(100, pct(value, max)));
-  const remainder = 100 - percent;
-
-  return new Table({
-    width: { size: 100, type: WidthType.PERCENTAGE },
-    borders: noBorders(),
-    rows: [
-      new TableRow({
-        children: [
-          new TableCell({
-            width: { size: percent || 1, type: WidthType.PERCENTAGE },
-            shading: { type: ShadingType.CLEAR, fill },
-            borders: noBorders(),
-            children: [new Paragraph({})],
-          }),
-          new TableCell({
-            width: { size: remainder || 1, type: WidthType.PERCENTAGE },
-            shading: { type: ShadingType.CLEAR, fill: empty },
-            borders: noBorders(),
-            children: [new Paragraph({})],
-          }),
-        ],
-      }),
-    ],
-  });
+function cleanComment(comment: string | null) {
+  if (!comment) return "";
+  if (comment.startsWith(ISSUE_PREFIX)) return comment.slice(ISSUE_PREFIX.length).trim();
+  if (comment.startsWith(NEXT_SHUT_PREFIX)) return comment.slice(NEXT_SHUT_PREFIX.length).trim();
+  return comment.trim();
 }
 
-function statusBarRow(label: string, count: number, total: number, color: string) {
-  const percent = pct(count, total);
-  return new TableRow({
-    children: [
-      new TableCell({
-        width: { size: 26, type: WidthType.PERCENTAGE },
-        borders: softBorder("E1E7F2"),
-        margins: { top: 90, bottom: 90, left: 140, right: 140 },
-        children: [
-          new Paragraph({
-            children: [new TextRun({ text: label, size: 19, color: "334155", bold: true })],
-          }),
-        ],
-      }),
-      new TableCell({
-        width: { size: 12, type: WidthType.PERCENTAGE },
-        borders: softBorder("E1E7F2"),
-        margins: { top: 90, bottom: 90, left: 140, right: 140 },
-        children: [
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [new TextRun({ text: String(count), size: 19, bold: true, color })],
-          }),
-        ],
-      }),
-      new TableCell({
-        width: { size: 50, type: WidthType.PERCENTAGE },
-        borders: softBorder("E1E7F2"),
-        margins: { top: 90, bottom: 90, left: 140, right: 140 },
-        children: [horizontalBar(count, total, color)],
-      }),
-      new TableCell({
-        width: { size: 12, type: WidthType.PERCENTAGE },
-        borders: softBorder("E1E7F2"),
-        margins: { top: 90, bottom: 90, left: 120, right: 120 },
-        children: [
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [new TextRun({ text: `${percent}%`, size: 18, color, bold: true })],
-          }),
-        ],
-      }),
-    ],
-  });
+function startMonthYear(dateStr: string | null) {
+  if (!dateStr) return "N/A";
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return "N/A";
+  return d.toLocaleString("en-US", { month: "long", year: "numeric" });
 }
 
 export async function GET(req: NextRequest) {
@@ -233,13 +121,6 @@ export async function GET(req: NextRequest) {
     .select("company_name, header_text, footer_text, logo_path, accent_hex")
     .eq("tenant_id", report.tenant_id)
     .maybeSingle<BrandingRow>();
-
-  const accent = normalizeHex(branding?.accent_hex, "C7662D");
-
-  let logo: Buffer | null = null;
-  if (branding?.logo_path) {
-    logo = await file("branding-logos", branding.logo_path);
-  }
 
   const { data: wos } = await supabase
     .from("work_orders")
@@ -269,451 +150,412 @@ export async function GET(req: NextRequest) {
   const total = woRows.length;
   const complete = woRows.filter((w) => w.status === "complete").length;
   const cancelled = woRows.filter((w) => w.status === "cancelled").length;
-  const open = total - complete - cancelled;
-  const completePct = pct(complete, total);
-  const openPct = pct(open, total);
-  const cancelledPct = pct(cancelled, total);
+  const open = woRows.filter((w) => w.status === "open").length;
 
-  const updatesByDate = new Map<string, number>();
-  for (const u of updates ?? []) {
-    const d = new Date(u.created_at);
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    updatesByDate.set(key, (updatesByDate.get(key) ?? 0) + 1);
+  const accent = normalizeHex(branding?.accent_hex, "C7662D");
+  const company = branding?.company_name ?? "Reportz";
+
+  let logoData: string | null = null;
+  if (branding?.logo_path) {
+    const logo = await file("branding-logos", branding.logo_path);
+    if (logo) logoData = asDataUri(logo, imageMimeFromPath(branding.logo_path));
   }
 
-  const trendDays: Array<{ day: string; count: number }> = [];
-  const now = new Date();
-  for (let i = 6; i >= 0; i -= 1) {
-    const d = new Date(now);
-    d.setDate(now.getDate() - i);
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-    trendDays.push({ day: key, count: updatesByDate.get(key) ?? 0 });
+  const pptx = new PptxGenJS();
+  pptx.layout = "LAYOUT_WIDE";
+  pptx.author = "Reportz";
+  pptx.company = company;
+  pptx.subject = `Shutdown report: ${report.name}`;
+  pptx.title = `${report.name} - Shutdown Report`;
+
+  // Slide 1: Title
+  {
+    const slide = pptx.addSlide();
+    slide.background = { color: "F6F7FB" };
+    slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 13.333, h: 0.35, fill: { color: accent }, line: { color: accent } });
+    if (logoData) {
+      slide.addImage({ data: logoData, x: 0.6, y: 0.55, w: 2.2, h: 0.8 });
+    }
+    slide.addText(company, {
+      x: 0.6,
+      y: 1.6,
+      w: 12,
+      h: 0.5,
+      fontFace: "Aptos",
+      fontSize: 22,
+      bold: true,
+      color: accent,
+    });
+    slide.addText("Shutdown Completion Report", {
+      x: 0.6,
+      y: 2.2,
+      w: 12,
+      h: 0.6,
+      fontFace: "Aptos",
+      fontSize: 34,
+      bold: true,
+      color: "0F172A",
+    });
+    slide.addText(report.name, {
+      x: 0.6,
+      y: 3.05,
+      w: 12,
+      h: 0.9,
+      fontFace: "Aptos",
+      fontSize: 28,
+      bold: true,
+      color: "0F172A",
+    });
+    slide.addShape(pptx.ShapeType.roundRect, {
+      x: 0.6,
+      y: 4.35,
+      w: 6.9,
+      h: 1.15,      fill: { color: "FFFFFF" },
+      line: { color: "D8DEEA", pt: 1 },
+    });
+    slide.addText(`${startMonthYear(report.start_date)}`, {
+      x: 0.9,
+      y: 4.8,
+      w: 6.4,
+      h: 0.3,
+      fontFace: "Aptos",
+      fontSize: 15,
+      color: "334155",
+      bold: true,
+    });
+    slide.addText(branding?.footer_text ?? "Generated by Reportz", {
+      x: 0.6,
+      y: 7.1,
+      w: 12,
+      h: 0.3,
+      fontFace: "Aptos",
+      fontSize: 10,
+      color: "64748B",
+    });
   }
-  const maxTrend = Math.max(...trendDays.map((x) => x.count), 1);
-  const statusMixWidths = {
-    complete: Math.max(completePct, complete > 0 ? 1 : 0),
-    open: Math.max(openPct, open > 0 ? 1 : 0),
-    cancelled: Math.max(cancelledPct, cancelled > 0 ? 1 : 0),
-  };
-  const mixSum = statusMixWidths.complete + statusMixWidths.open + statusMixWidths.cancelled;
-  if (mixSum !== 100) {
-    statusMixWidths.complete = Math.max(0, statusMixWidths.complete + (100 - mixSum));
-  }
 
-  const header = new Header({
-    children: [
-      new Table({
-        width: { size: 100, type: WidthType.PERCENTAGE },
-        borders: noBorders(),
-        rows: [
-          new TableRow({
-            children: [
-              new TableCell({
-                width: { size: 28, type: WidthType.PERCENTAGE },
-                borders: noBorders(),
-                children: [
-                  new Paragraph({
-                    children: logo
-                      ? [new ImageRun({ data: logo, transformation: { width: 112, height: 38 }, type: "png" })]
-                      : [new TextRun({ text: branding?.company_name ?? "Reportz", bold: true, size: 22, color: accent })],
-                  }),
-                ],
-              }),
-              new TableCell({
-                width: { size: 72, type: WidthType.PERCENTAGE },
-                borders: noBorders(),
-                verticalAlign: VerticalAlign.CENTER,
-                children: [
-                  new Paragraph({
-                    alignment: AlignmentType.RIGHT,
-                    children: [
-                      new TextRun({ text: branding?.header_text ?? "Reportz", bold: true, size: 20, color: "0F172A" }),
-                    ],
-                  }),
-                  new Paragraph({
-                    alignment: AlignmentType.RIGHT,
-                    children: [new TextRun({ text: report.name, size: 18, color: "5F6F88" })],
-                  }),
-                ],
-              }),
-            ],
-          }),
-          new TableRow({
-            children: [
-              new TableCell({
-                columnSpan: 2,
-                borders: noBorders(),
-                children: [divider("D8DEEA")],
-              }),
-            ],
-          }),
-        ],
-      }),
-    ],
-  });
+  // Slide 2: Dashboard
+  {
+    const slide = pptx.addSlide();
+    slide.background = { color: "FFFFFF" };
+    slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 13.333, h: 0.28, fill: { color: accent }, line: { color: accent } });
+    slide.addText("Executive Dashboard", {
+      x: 0.6,
+      y: 0.45,
+      w: 7,
+      h: 0.5,
+      fontFace: "Aptos",
+      fontSize: 26,
+      bold: true,
+      color: "0F172A",
+    });
 
-  const footer = new Footer({
-    children: [
-      divider("D8DEEA"),
-      new Paragraph({
-        alignment: AlignmentType.CENTER,
-        children: [
-          new TextRun({ text: branding?.footer_text ?? "Generated by Reportz", size: 17, color: "5F6F88" }),
-          new TextRun({ text: " | Page ", size: 17, color: "5F6F88" }),
-          new TextRun({ children: [PageNumber.CURRENT], size: 17, color: "5F6F88" }),
-        ],
-      }),
-    ],
-  });
+    const kpi = [
+      { label: "Total", val: total, bg: "F8FAFF", color: "0F172A" },
+      { label: "Completed", val: complete, bg: "EAF8F0", color: "1B8F5A" },
+      { label: "Open", val: open, bg: "FFF7E4", color: "B67710" },
+      { label: "Cancelled", val: cancelled, bg: "FCEDEE", color: "B92C2C" },
+    ];
 
-  const title = [
-    new Paragraph({ spacing: { after: 900 } }),
-    new Paragraph({
-      alignment: AlignmentType.CENTER,
-      children: [new TextRun({ text: branding?.company_name ?? "Reportz", bold: true, size: 48, color: accent })],
-      spacing: { after: 130 },
-    }),
-    new Paragraph({
-      alignment: AlignmentType.CENTER,
-      children: [new TextRun({ text: "Shutdown Completion Report", size: 30, color: "0F172A" })],
-      spacing: { after: 180 },
-    }),
-    new Paragraph({
-      alignment: AlignmentType.CENTER,
-      children: [new TextRun({ text: report.name, bold: true, size: 36, color: "0F172A" })],
-      spacing: { after: 320 },
-    }),
-    new Table({
-      width: { size: 72, type: WidthType.PERCENTAGE },
-      alignment: AlignmentType.CENTER,
-      borders: softBorder("D8DEEA"),
-      rows: [
-        new TableRow({
-          children: [
-            new TableCell({
-              children: [
-                new Paragraph({
-                  alignment: AlignmentType.CENTER,
-                  children: [new TextRun({ text: "Date Range", bold: true, size: 18, color: "5F6F88" })],
-                }),
-                new Paragraph({
-                  alignment: AlignmentType.CENTER,
-                  children: [
-                    new TextRun({
-                      text: `${report.start_date ?? "N/A"} to ${report.end_date ?? "N/A"}`,
-                      size: 22,
-                      bold: true,
-                    }),
-                  ],
-                }),
-              ],
-            }),
-          ],
-        }),
-      ],
-    }),
-    new Paragraph({ children: [new PageBreak()] }),
-  ];
+    kpi.forEach((k, i) => {
+      const x = 0.6 + i * 3.1;
+      slide.addShape(pptx.ShapeType.roundRect, {
+        x,
+        y: 1.1,
+        w: 2.85,
+        h: 1.25,        fill: { color: k.bg },
+        line: { color: "D8DEEA", pt: 1 },
+      });
+      slide.addText(k.label, { x: x + 0.2, y: 1.3, w: 2.4, h: 0.25, fontFace: "Aptos", fontSize: 11, color: "5F6F88", bold: true });
+      slide.addText(String(k.val), { x: x + 0.2, y: 1.58, w: 2.4, h: 0.55, fontFace: "Aptos", fontSize: 28, color: k.color, bold: true });
+    });
 
-  const summary = [
-    new Paragraph({
-      children: [new TextRun({ text: "Executive Summary", bold: true, size: 34, color: "0F172A" })],
-      spacing: { after: 150 },
-    }),
-    new Paragraph({
-      children: [
-        new TextRun({
-          text: `This shutdown planned ${total} work orders: ${complete} completed, ${open} open, and ${cancelled} cancelled.`,
-          size: 22,
-          color: "334155",
-        }),
-      ],
-      spacing: { after: 280 },
-    }),
-    new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
-      borders: noBorders(),
-      rows: [
-        new TableRow({
-          children: [
-            kpiCell("Total", String(total), "F8FAFF"),
-            kpiCell("Completed", String(complete), "EAF8F0", "1B8F5A"),
-            kpiCell("Open", String(open), "FFF7E4", "B67710"),
-            kpiCell("Cancelled", String(cancelled), "FCEDEE", "B92C2C"),
-          ],
-        }),
-      ],
-    }),
-    new Paragraph({ spacing: { after: 220 } }),
-    new Paragraph({
-      children: [new TextRun({ text: "Visual Dashboard", bold: true, size: 30, color: "0F172A" })],
-      spacing: { after: 120 },
-    }),
-    new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
-      borders: softBorder("D8DEEA"),
-      rows: [
-        new TableRow({
-          children: [
-            new TableCell({
-              margins: { top: 140, bottom: 140, left: 180, right: 180 },
-              children: [
-                new Paragraph({
-                  children: [new TextRun({ text: "Completion", size: 18, color: "5F6F88", bold: true })],
-                  spacing: { after: 80 },
-                }),
-                horizontalBar(complete, Math.max(total, 1), "1B8F5A"),
-                new Paragraph({
-                  spacing: { before: 80 },
-                  children: [new TextRun({ text: `${completePct}% complete`, size: 18, color: "1B8F5A", bold: true })],
-                }),
-              ],
-            }),
-          ],
-        }),
-      ],
-    }),
-    new Paragraph({ spacing: { after: 100 } }),
-    new Paragraph({
-      children: [new TextRun({ text: "Status Mix", size: 22, bold: true, color: "334155" })],
-      spacing: { after: 80 },
-    }),
-    new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
-      borders: softBorder("D8DEEA"),
-      rows: [
-        new TableRow({
-          children: [
-            new TableCell({
-              width: { size: statusMixWidths.complete || 1, type: WidthType.PERCENTAGE },
-              shading: { type: ShadingType.CLEAR, fill: "1B8F5A" },
-              borders: noBorders(),
-              children: [new Paragraph({})],
-            }),
-            new TableCell({
-              width: { size: statusMixWidths.open || 1, type: WidthType.PERCENTAGE },
-              shading: { type: ShadingType.CLEAR, fill: "B67710" },
-              borders: noBorders(),
-              children: [new Paragraph({})],
-            }),
-            new TableCell({
-              width: { size: statusMixWidths.cancelled || 1, type: WidthType.PERCENTAGE },
-              shading: { type: ShadingType.CLEAR, fill: "B92C2C" },
-              borders: noBorders(),
-              children: [new Paragraph({})],
-            }),
-          ],
-        }),
-      ],
-    }),
-    new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
-      borders: noBorders(),
-      rows: [
-        new TableRow({
-          children: [
-            new TableCell({
-              borders: noBorders(),
-              children: [new Paragraph({ children: [new TextRun({ text: `Completed ${completePct}%`, color: "1B8F5A", bold: true, size: 17 })] })],
-            }),
-            new TableCell({
-              borders: noBorders(),
-              children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: `Open ${openPct}%`, color: "B67710", bold: true, size: 17 })] })],
-            }),
-            new TableCell({
-              borders: noBorders(),
-              children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [new TextRun({ text: `Cancelled ${cancelledPct}%`, color: "B92C2C", bold: true, size: 17 })] })],
-            }),
-          ],
-        }),
-      ],
-    }),
-    new Paragraph({ spacing: { after: 120 } }),
-    new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
-      borders: noBorders(),
-      rows: [
-        statusBarRow("Completed", complete, Math.max(total, 1), "1B8F5A"),
-        statusBarRow("Open", open, Math.max(total, 1), "B67710"),
-        statusBarRow("Cancelled", cancelled, Math.max(total, 1), "B92C2C"),
-      ],
-    }),
-    new Paragraph({ spacing: { after: 120 } }),
-    new Paragraph({
-      children: [new TextRun({ text: "Update Activity (Last 7 Days)", size: 22, bold: true, color: "334155" })],
-      spacing: { after: 80 },
-    }),
-    new Table({
-      width: { size: 100, type: WidthType.PERCENTAGE },
-      borders: noBorders(),
-      rows: trendDays.map((row) =>
-        new TableRow({
-          children: [
-            new TableCell({
-              width: { size: 22, type: WidthType.PERCENTAGE },
-              borders: softBorder("E1E7F2"),
-              margins: { top: 80, bottom: 80, left: 140, right: 140 },
-              children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [new TextRun({ text: row.day, size: 17, color: "5F6F88" })] })],
-            }),
-            new TableCell({
-              width: { size: 78, type: WidthType.PERCENTAGE },
-              borders: softBorder("E1E7F2"),
-              margins: { top: 80, bottom: 80, left: 140, right: 140 },
-              children: [
-                horizontalBar(row.count, maxTrend, accent, "E7EDF7"),
-                new Paragraph({
-                  spacing: { before: 80 },
-                  children: [
-                    new TextRun({
-                      text: `${row.count} updates`,
-                      size: 17,
-                      color: "334155",
-                    }),
-                  ],
-                }),
-              ],
-            }),
-          ],
-        })
-      ),
-    }),
-    new Paragraph({ children: [new PageBreak()] }),
-  ];
+    // Status composition bar
+    const mix = [
+      { label: "Completed", value: complete, color: "1B8F5A" },
+      { label: "Open", value: open, color: "B67710" },
+      { label: "Cancelled", value: cancelled, color: "B92C2C" },
+    ];
+    const mixTotal = Math.max(total, 1);
+    let cursor = 0.6;
+    const width = 12.1;
 
-  const detailBlocks: (Paragraph | Table)[] = [];
+    slide.addText("Status Mix", { x: 0.6, y: 2.75, w: 3, h: 0.3, fontFace: "Aptos", fontSize: 14, bold: true, color: "334155" });
+    mix.forEach((m) => {
+      const w = Math.max((m.value / mixTotal) * width, m.value > 0 ? 0.08 : 0);
+      slide.addShape(pptx.ShapeType.rect, {
+        x: cursor,
+        y: 3.05,
+        w,
+        h: 0.35,
+        fill: { color: m.color },
+        line: { color: m.color, pt: 0 },
+      });
+      cursor += w;
+    });
 
-  for (const w of woRows) {
-    const s = statusTheme(w.status);
+    let legendY = 3.55;
+    mix.forEach((m) => {
+      slide.addShape(pptx.ShapeType.rect, { x: 0.6, y: legendY + 0.05, w: 0.14, h: 0.14, fill: { color: m.color }, line: { color: m.color, pt: 0 } });
+      slide.addText(`${m.label}: ${m.value} (${pct(m.value, mixTotal)}%)`, {
+        x: 0.8,
+        y: legendY,
+        w: 4,
+        h: 0.2,
+        fontFace: "Aptos",
+        fontSize: 11,
+        color: "334155",
+      });
+      legendY += 0.27;
+    });
 
-    detailBlocks.push(
-      new Paragraph({
-        children: [new TextRun({ text: `${w.wo_number} | ${w.title ?? "Untitled work order"}`, bold: true, size: 28 })],
-        spacing: { before: 100, after: 90 },
-      }),
-      new Table({
-        width: { size: 100, type: WidthType.PERCENTAGE },
-        borders: noBorders(),
-        rows: [
-          new TableRow({
-            children: [
-              new TableCell({
-                width: { size: 35, type: WidthType.PERCENTAGE },
-                borders: softBorder("D8DEEA"),
-                shading: { type: ShadingType.CLEAR, fill: s.fill },
-                margins: { top: 120, bottom: 120, left: 180, right: 180 },
-                children: [
-                  new Paragraph({
-                    children: [new TextRun({ text: `Status: ${w.status.toUpperCase()}`, bold: true, color: s.text, size: 20 })],
-                  }),
-                ],
-              }),
-              new TableCell({
-                width: { size: 65, type: WidthType.PERCENTAGE },
-                borders: softBorder("D8DEEA"),
-                margins: { top: 120, bottom: 120, left: 180, right: 180 },
-                children: [
-                  new Paragraph({
-                    children: [
-                      new TextRun({
-                        text:
-                          w.status === "cancelled"
-                            ? `Reason: ${w.cancelled_reason ?? "Not provided"}`
-                            : w.status === "complete"
-                            ? `Completed at: ${w.completed_at ? new Date(w.completed_at).toLocaleString() : "N/A"}`
-                            : "In progress",
-                        size: 20,
-                        color: "334155",
-                      }),
-                    ],
-                  }),
-                ],
-              }),
-            ],
-          }),
-        ],
-      }),
-      new Paragraph({ spacing: { after: 130 } })
+    // Schedule compliance (completed vs total)
+    const compliancePct = pct(complete, Math.max(total, 1));
+    const remaining = Math.max(total - complete, 0);
+
+    slide.addText("Schedule Compliance", {
+      x: 5.3,
+      y: 3.55,
+      w: 4.8,
+      h: 0.3,
+      fontFace: "Aptos",
+      fontSize: 14,
+      bold: true,
+      color: "334155",
+    });
+
+    slide.addShape(pptx.ShapeType.roundRect, {
+      x: 5.25,
+      y: 3.9,
+      w: 7.1,
+      h: 3.05,
+      fill: { color: "F8FAFF" },
+      line: { color: "D8DEEA", pt: 1 },
+    });
+
+    slide.addChart(
+      pptx.ChartType.doughnut,
+      [
+        { name: "Compliance", labels: ["Completed", "Remaining"], values: [complete, remaining] },
+      ],
+      {
+        x: 5.5,
+        y: 4.15,
+        w: 3.4,
+        h: 2.5,
+        showLegend: false,
+        holeSize: 68,
+        chartColors: ["1B8F5A", "E2E8F0"],
+        showValue: false,
+      }
     );
 
-    const list = updatesByWo.get(w.id) ?? [];
-
-    if (!list.length) {
-      detailBlocks.push(
-        new Paragraph({
-          children: [new TextRun({ text: "No updates were logged for this work order.", italics: true, color: "5F6F88", size: 20 })],
-          spacing: { after: 180 },
-        }),
-        new Paragraph({ children: [new PageBreak()] })
-      );
-      continue;
-    }
-
-    for (const u of list) {
-      detailBlocks.push(
-        new Table({
-          width: { size: 100, type: WidthType.PERCENTAGE },
-          borders: softBorder("D8DEEA"),
-          rows: [
-            new TableRow({
-              children: [
-                new TableCell({
-                  margins: { top: 120, bottom: 120, left: 180, right: 180 },
-                  children: [
-                    new Paragraph({
-                      children: [new TextRun({ text: new Date(u.created_at).toLocaleString(), bold: true, size: 18, color: "5F6F88" })],
-                      spacing: { after: 90 },
-                    }),
-                    new Paragraph({
-                      children: [new TextRun({ text: u.comment || "No comment", size: 22, color: "0F172A" })],
-                    }),
-                  ],
-                }),
-              ],
-            }),
-          ],
-        }),
-        new Paragraph({ spacing: { after: 100 } })
-      );
-
-      for (const path of u.photo_urls ?? []) {
-        const buf = await file("report-photos", path);
-        if (!buf) continue;
-
-        detailBlocks.push(
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [new ImageRun({ data: buf, transformation: { width: 520, height: 300 }, type: imgType(path) })],
-          }),
-          new Paragraph({
-            alignment: AlignmentType.CENTER,
-            children: [new TextRun({ text: "Site Photo", italics: true, size: 17, color: "5F6F88" })],
-            spacing: { after: 130 },
-          })
-        );
-      }
-    }
-
-    detailBlocks.push(new Paragraph({ children: [new PageBreak()] }));
+    slide.addText(`${compliancePct}%`, {
+      x: 8.95,
+      y: 4.45,
+      w: 2.9,
+      h: 0.62,
+      fontFace: "Aptos",
+      fontSize: 40,
+      bold: true,
+      color: "1B8F5A",
+      align: "center",
+    });
+    slide.addText("On-schedule completion", {
+      x: 8.95,
+      y: 5.08,
+      w: 2.9,
+      h: 0.28,
+      fontFace: "Aptos",
+      fontSize: 10,
+      color: "64748B",
+      align: "center",
+    });
+    slide.addText(`${complete} completed of ${total} total`, {
+      x: 8.95,
+      y: 5.42,
+      w: 2.9,
+      h: 0.25,
+      fontFace: "Aptos",
+      fontSize: 11,
+      color: "334155",
+      bold: true,
+      align: "center",
+    });
   }
 
-  const doc = new Document({
-    sections: [
-      {
-        properties: { page: { margin: { top: 800, right: 800, bottom: 900, left: 800 } } },
-        headers: { default: header },
-        footers: { default: footer },
-        children: [...title, ...summary, ...detailBlocks],
-      },
-    ],
-  });
+  // Work order detail slides
+  for (const w of woRows) {
+    const slide = pptx.addSlide();
+    slide.background = { color: "FFFFFF" };
+    slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 13.333, h: 0.2, fill: { color: accent }, line: { color: accent } });
 
-  const buf = await Packer.toBuffer(doc);
-  const body = new Uint8Array(buf);
+    slide.addText(`${w.wo_number} | ${w.title ?? "Untitled work order"}`, {
+      x: 0.6,
+      y: 0.45,
+      w: 11.8,
+      h: 0.65,
+      fontFace: "Aptos",
+      fontSize: 24,
+      bold: true,
+      color: "0F172A",
+    });
+
+    const sColor = statusColor(w.status);
+    slide.addShape(pptx.ShapeType.roundRect, {
+      x: 0.6,
+      y: 1.25,
+      w: 2.4,
+      h: 0.46,      fill: { color: "F8FAFC" },
+      line: { color: sColor, pt: 1 },
+    });
+    slide.addText(`Status: ${w.status.toUpperCase()}`, {
+      x: 0.78,
+      y: 1.39,
+      w: 2,
+      h: 0.2,
+      fontFace: "Aptos",
+      fontSize: 11,
+      bold: true,
+      color: sColor,
+    });
+
+    const list = updatesByWo.get(w.id) ?? [];
+    const statusMeta =
+      w.status === "cancelled"
+        ? `Reason: ${w.cancelled_reason ?? "Not provided"}`
+        : w.status === "complete"
+        ? `Completed at: ${w.completed_at ? new Date(w.completed_at).toLocaleString() : "N/A"}`
+        : "In progress";
+
+    slide.addText(statusMeta, {
+      x: 3.2,
+      y: 1.36,
+      w: 6.8,
+      h: 0.22,
+      fontFace: "Aptos",
+      fontSize: 11,
+      color: "334155",
+    });
+
+    const comments = list.filter((u) => getEntryKind(u.comment) === "comments");
+    const issues = list.filter((u) => getEntryKind(u.comment) === "issues");
+    const nextShut = list.filter((u) => getEntryKind(u.comment) === "next");
+    const allPhotoPaths = list.flatMap((u) => u.photo_urls ?? []).slice(0, 6);
+
+    const sections = [
+      { title: "Comments", rows: comments, y: 2.05 },
+      { title: "Issues", rows: issues, y: 3.9 },
+      { title: "Work required next shutdown", rows: nextShut, y: 5.75 },
+    ] as const;
+
+    for (const section of sections) {
+      const lines = section.rows.slice(0, 2).map((u) => `- ${cleanComment(u.comment) || "No comment"}`);
+
+      slide.addShape(pptx.ShapeType.roundRect, {
+        x: 0.6,
+        y: section.y,
+        w: 7.35,
+        h: 1.6,
+        fill: { color: "F8FAFF" },
+        line: { color: "D8DEEA", pt: 1 },
+      });
+
+      slide.addText(section.title, {
+        x: 0.82,
+        y: section.y + 0.12,
+        w: 6.9,
+        h: 0.24,
+        fontFace: "Aptos",
+        fontSize: 13,
+        bold: true,
+        color: "0F172A",
+      });
+
+      slide.addText(lines.length ? lines.join("\n") : "No entries.", {
+        x: 0.82,
+        y: section.y + 0.42,
+        w: 6.95,
+        h: 1.04,
+        fontFace: "Aptos",
+        fontSize: 11,
+        color: "334155",
+        breakLine: true,
+      });
+
+    }
+
+    const galleryX = 8.15;
+    const galleryY = 2.05;
+    const galleryW = 4.55;
+    const galleryH = 5.3;
+    const galleryContentY = galleryY + 0.42;
+
+    slide.addShape(pptx.ShapeType.roundRect, {
+      x: galleryX,
+      y: galleryY,
+      w: galleryW,
+      h: galleryH,
+      fill: { color: "F8FAFC" },
+      line: { color: "D8DEEA", pt: 1 },
+    });
+    slide.addText("Photos", {
+      x: galleryX + 0.23,
+      y: galleryY + 0.11,
+      w: 4.1,
+      h: 0.24,
+      fontFace: "Aptos",
+      fontSize: 12,
+      bold: true,
+      color: "0F172A",
+    });
+
+    if (!allPhotoPaths.length) {
+      slide.addText("No photos logged.", {
+        x: galleryX + 0.23,
+        y: galleryY + 2.65,
+        w: galleryW - 0.46,
+        h: 0.3,
+        align: "center",
+        fontFace: "Aptos",
+        fontSize: 11,
+        color: "64748B",
+        italic: true,
+      });
+    }
+
+    for (let i = 0; i < allPhotoPaths.length; i += 1) {
+      const path = allPhotoPaths[i];
+      const pbuf = await file("report-photos", path);
+      if (!pbuf) continue;
+
+      const photoData = asDataUri(pbuf, imageMimeFromPath(path));
+      const col = i % 2;
+      const row = Math.floor(i / 2);
+      const x = galleryX + 0.23 + col * 2.1;
+      const y = galleryContentY + 0.08 + row * 1.56;
+      const w = 1.98;
+      const h = 1.44;
+
+      slide.addImage({
+        data: photoData,
+        x,
+        y,
+        w,
+        h,
+        sizing: { type: "contain", w, h },
+      });
+    }
+  }
+
+  const out = await pptx.write({ outputType: "nodebuffer" });
+  const body = new Uint8Array(out as Buffer);
 
   return new NextResponse(body, {
     headers: {
-      "Content-Type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-      "Content-Disposition": `attachment; filename="${safe(report.name)}.docx"`,
+      "Content-Type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+      "Content-Disposition": `attachment; filename="${safe(report.name)}.pptx"`,
     },
   });
 }
+

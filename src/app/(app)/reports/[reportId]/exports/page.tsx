@@ -154,7 +154,18 @@ export default function ExportsPage() {
 
         <label className="field">
           <span className="label">Logo (PNG recommended)</span>
-          <input type="file" accept="image/*" onChange={(e) => setLogoFile(e.target.files?.[0] ?? null)} />
+          <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
+            <label className="btn btn-soft" style={{ cursor: "pointer", width: "fit-content" }}>
+              Choose logo
+              <input
+                type="file"
+                accept="image/*"
+                style={{ display: "none" }}
+                onChange={(e) => setLogoFile(e.target.files?.[0] ?? null)}
+              />
+            </label>
+            {logoFile ? <span className="muted">{logoFile.name}</span> : <span className="muted">No file selected</span>}
+          </div>
         </label>
 
         <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
@@ -167,9 +178,10 @@ export default function ExportsPage() {
 
       <div>
         <button className="btn" onClick={exportWord}>
-          Export Word (.docx)
+          Export PowerPoint (.pptx)
         </button>
       </div>
     </div>
   );
 }
+

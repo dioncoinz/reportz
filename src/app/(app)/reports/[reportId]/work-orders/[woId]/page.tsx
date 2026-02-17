@@ -23,6 +23,23 @@ type UpdateRow = {
   created_at: string;
 };
 
+const ISSUE_PREFIX = "__ISSUE__:";
+const NEXT_SHUT_PREFIX = "__NEXT_SHUT__:";
+
+function getEntryKind(comment: string | null): "issue" | "next" | "update" {
+  if (!comment) return "update";
+  if (comment.startsWith(ISSUE_PREFIX)) return "issue";
+  if (comment.startsWith(NEXT_SHUT_PREFIX)) return "next";
+  return "update";
+}
+
+function stripEntryPrefix(comment: string | null): string | null {
+  if (!comment) return null;
+  if (comment.startsWith(ISSUE_PREFIX)) return comment.slice(ISSUE_PREFIX.length).trim() || null;
+  if (comment.startsWith(NEXT_SHUT_PREFIX)) return comment.slice(NEXT_SHUT_PREFIX.length).trim() || null;
+  return comment;
+}
+
 export default function WorkOrderDetailPage() {
   const supabase = createSupabaseBrowser();
   const router = useRouter();
@@ -38,9 +55,15 @@ export default function WorkOrderDetailPage() {
   const [comment, setComment] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
+  const [savingIssues, setSavingIssues] = useState(false);
+  const [savingNextShut, setSavingNextShut] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [signedMap, setSignedMap] = useState<Record<string, string>>({});
   const [cancelReason, setCancelReason] = useState("");
+  const [issuesComment, setIssuesComment] = useState("");
+  const [issuesFiles, setIssuesFiles] = useState<File[]>([]);
+  const [nextShutComment, setNextShutComment] = useState("");
+  const [nextShutFiles, setNextShutFiles] = useState<File[]>([]);
 
   async function load() {
     setLoading(true);
@@ -148,8 +171,14 @@ export default function WorkOrderDetailPage() {
     setMsg("Reason saved");
   }
 
-  async function addUpdate() {
-    setSaving(true);
+  async function addEntry(kind: "update" | "issue" | "next") {
+    const isUpdate = kind === "update";
+    const isIssue = kind === "issue";
+
+    if (isUpdate) setSaving(true);
+    if (isIssue) setSavingIssues(true);
+    if (!isUpdate && !isIssue) setSavingNextShut(true);
+
     setMsg(null);
     setErr(null);
 
@@ -162,11 +191,13 @@ export default function WorkOrderDetailPage() {
       return;
     }
 
+    const chosenFiles = isUpdate ? files : isIssue ? issuesFiles : nextShutFiles;
+    const rawComment = isUpdate ? comment : isIssue ? issuesComment : nextShutComment;
     const photoPaths: string[] = [];
 
-    for (const file of files) {
+    for (const file of chosenFiles) {
       const safeName = file.name.replace(/\s+/g, "_");
-      const path = `${reportId}/${woId}/${Date.now()}_${safeName}`;
+      const path = `${reportId}/${woId}/${kind}/${Date.now()}_${safeName}`;
 
       const { error: upErr } = await supabase.storage.from("report-photos").upload(path, file, {
         cacheControl: "3600",
@@ -174,7 +205,9 @@ export default function WorkOrderDetailPage() {
       });
 
       if (upErr) {
-        setSaving(false);
+        if (isUpdate) setSaving(false);
+        if (isIssue) setSavingIssues(false);
+        if (!isUpdate && !isIssue) setSavingNextShut(false);
         setErr(`Photo upload failed: ${upErr.message}`);
         return;
       }
@@ -182,25 +215,49 @@ export default function WorkOrderDetailPage() {
       photoPaths.push(path);
     }
 
+    const cleaned = rawComment.trim();
+    const taggedComment = isIssue
+      ? `${ISSUE_PREFIX} ${cleaned}`.trim()
+      : !isUpdate && !isIssue
+      ? `${NEXT_SHUT_PREFIX} ${cleaned}`.trim()
+      : cleaned;
+
     const { error: insErr } = await supabase.from("wo_updates").insert({
       work_order_id: woId,
       created_by: user.id,
-      comment: comment.trim() || null,
+      comment: taggedComment || null,
       photo_urls: photoPaths,
     });
 
     if (insErr) {
-      setSaving(false);
+      if (isUpdate) setSaving(false);
+      if (isIssue) setSavingIssues(false);
+      if (!isUpdate && !isIssue) setSavingNextShut(false);
       setErr(insErr.message);
       return;
     }
 
-    setComment("");
-    setFiles([]);
-    setMsg("Update added");
-    setSaving(false);
+    if (isUpdate) {
+      setComment("");
+      setFiles([]);
+    } else if (isIssue) {
+      setIssuesComment("");
+      setIssuesFiles([]);
+    } else {
+      setNextShutComment("");
+      setNextShutFiles([]);
+    }
+
+    setMsg(isUpdate ? "Update added" : isIssue ? "Issue saved" : "Next shut item saved");
+    if (isUpdate) setSaving(false);
+    if (isIssue) setSavingIssues(false);
+    if (!isUpdate && !isIssue) setSavingNextShut(false);
     await load();
   }
+
+  const generalUpdates = updates.filter((u) => getEntryKind(u.comment) === "update");
+  const issueEntries = updates.filter((u) => getEntryKind(u.comment) === "issue");
+  const nextShutEntries = updates.filter((u) => getEntryKind(u.comment) === "next");
 
   if (loading) return <p className="muted">Loading...</p>;
 
@@ -291,7 +348,7 @@ export default function WorkOrderDetailPage() {
       </div>
 
       <div className="section-card grid" style={{ gap: "0.75rem" }}>
-        <h3>Add update</h3>
+        <h3>Comments</h3>
 
         <textarea
           className="textarea"
@@ -336,23 +393,129 @@ export default function WorkOrderDetailPage() {
         </div>
 
         <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
-          <button className="btn btn-primary" onClick={addUpdate} disabled={saving || (!comment.trim() && files.length === 0)}>
-            {saving ? "Saving..." : "Add update"}
+          <button
+            className="btn btn-primary"
+            onClick={() => addEntry("update")}
+            disabled={saving || (!comment.trim() && files.length === 0)}
+          >
+            {saving ? "Saving..." : "Save comment"}
           </button>
           {msg ? <span className="muted">{msg}</span> : null}
         </div>
       </div>
 
-      <div className="grid">
-        <h3>Updates</h3>
+      <div className="section-card grid" style={{ gap: "0.75rem" }}>
+        <h3>Issues</h3>
+        <textarea
+          className="textarea"
+          value={issuesComment}
+          onChange={(e) => setIssuesComment(e.target.value)}
+          placeholder="Describe issue found..."
+          rows={3}
+        />
+        <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", alignItems: "center" }}>
+          <label className="btn btn-soft" style={{ cursor: "pointer" }}>
+            Take photo
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const picked = Array.from(e.target.files ?? []);
+                if (picked.length) setIssuesFiles((prev) => [...prev, ...picked]);
+                e.currentTarget.value = "";
+              }}
+            />
+          </label>
+          <label className="btn btn-soft" style={{ cursor: "pointer" }}>
+            Add photos
+            <input
+              type="file"
+              multiple
+              accept="image/*"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const picked = Array.from(e.target.files ?? []);
+                if (picked.length) setIssuesFiles((prev) => [...prev, ...picked]);
+                e.currentTarget.value = "";
+              }}
+            />
+          </label>
+          <span className="muted">Selected: {issuesFiles.length}</span>
+        </div>
+        <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
+          <button
+            className="btn btn-primary"
+            onClick={() => addEntry("issue")}
+            disabled={savingIssues || (!issuesComment.trim() && issuesFiles.length === 0)}
+          >
+            {savingIssues ? "Saving..." : "Save issue"}
+          </button>
+        </div>
+      </div>
 
-        {updates.map((u) => (
+      <div className="section-card grid" style={{ gap: "0.75rem" }}>
+        <h3>Work required next shut</h3>
+        <textarea
+          className="textarea"
+          value={nextShutComment}
+          onChange={(e) => setNextShutComment(e.target.value)}
+          placeholder="Describe work needed next shutdown..."
+          rows={3}
+        />
+        <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", alignItems: "center" }}>
+          <label className="btn btn-soft" style={{ cursor: "pointer" }}>
+            Take photo
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const picked = Array.from(e.target.files ?? []);
+                if (picked.length) setNextShutFiles((prev) => [...prev, ...picked]);
+                e.currentTarget.value = "";
+              }}
+            />
+          </label>
+          <label className="btn btn-soft" style={{ cursor: "pointer" }}>
+            Add photos
+            <input
+              type="file"
+              multiple
+              accept="image/*"
+              style={{ display: "none" }}
+              onChange={(e) => {
+                const picked = Array.from(e.target.files ?? []);
+                if (picked.length) setNextShutFiles((prev) => [...prev, ...picked]);
+                e.currentTarget.value = "";
+              }}
+            />
+          </label>
+          <span className="muted">Selected: {nextShutFiles.length}</span>
+        </div>
+        <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
+          <button
+            className="btn btn-primary"
+            onClick={() => addEntry("next")}
+            disabled={savingNextShut || (!nextShutComment.trim() && nextShutFiles.length === 0)}
+          >
+            {savingNextShut ? "Saving..." : "Save next shut work"}
+          </button>
+        </div>
+      </div>
+
+      <div className="grid">
+        <h3>Comments</h3>
+
+        {generalUpdates.map((u) => (
           <div key={u.id} className="section-card" style={{ padding: "0.85rem" }}>
             <div className="muted" style={{ fontSize: "0.78rem" }}>
               {new Date(u.created_at).toLocaleString()}
             </div>
 
-            {u.comment ? <div style={{ marginTop: "0.45rem" }}>{u.comment}</div> : null}
+            {u.comment ? <div style={{ marginTop: "0.45rem" }}>{stripEntryPrefix(u.comment)}</div> : null}
 
             {u.photo_urls?.length ? (
               <div className="photo-grid" style={{ marginTop: "0.65rem" }}>
@@ -367,7 +530,53 @@ export default function WorkOrderDetailPage() {
           </div>
         ))}
 
-        {updates.length === 0 ? <p className="muted">No updates yet. Add the first one above.</p> : null}
+        {generalUpdates.length === 0 ? <p className="muted">No comments yet. Add the first one above.</p> : null}
+      </div>
+
+      <div className="grid">
+        <h3>Logged Issues</h3>
+        {issueEntries.map((u) => (
+          <div key={u.id} className="section-card" style={{ padding: "0.85rem" }}>
+            <div className="muted" style={{ fontSize: "0.78rem" }}>
+              {new Date(u.created_at).toLocaleString()}
+            </div>
+            {u.comment ? <div style={{ marginTop: "0.45rem" }}>{stripEntryPrefix(u.comment)}</div> : null}
+            {u.photo_urls?.length ? (
+              <div className="photo-grid" style={{ marginTop: "0.65rem" }}>
+                {u.photo_urls.map((path) => (
+                  <a key={path} href={signedMap[path] || "#"} target="_blank" rel="noreferrer">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={signedMap[path] || ""} alt="Issue photo" className="photo-thumb" />
+                  </a>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ))}
+        {issueEntries.length === 0 ? <p className="muted">No issues logged yet.</p> : null}
+      </div>
+
+      <div className="grid">
+        <h3>Work Required Next Shut</h3>
+        {nextShutEntries.map((u) => (
+          <div key={u.id} className="section-card" style={{ padding: "0.85rem" }}>
+            <div className="muted" style={{ fontSize: "0.78rem" }}>
+              {new Date(u.created_at).toLocaleString()}
+            </div>
+            {u.comment ? <div style={{ marginTop: "0.45rem" }}>{stripEntryPrefix(u.comment)}</div> : null}
+            {u.photo_urls?.length ? (
+              <div className="photo-grid" style={{ marginTop: "0.65rem" }}>
+                {u.photo_urls.map((path) => (
+                  <a key={path} href={signedMap[path] || "#"} target="_blank" rel="noreferrer">
+                    {/* eslint-disable-next-line @next/next/no-img-element */}
+                    <img src={signedMap[path] || ""} alt="Next shut photo" className="photo-thumb" />
+                  </a>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ))}
+        {nextShutEntries.length === 0 ? <p className="muted">No next shut work logged yet.</p> : null}
       </div>
     </div>
   );
