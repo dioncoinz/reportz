@@ -14,6 +14,9 @@ type ReportRow = {
   status: string;
   created_at: string;
 };
+type WorkOrderStatusRow = {
+  status: "open" | "complete" | "cancelled";
+};
 const ARCHIVE_PREFIX = "[ARCHIVED] ";
 
 function isArchivedReport(r: ReportRow) {
@@ -36,6 +39,7 @@ export default function ReportDetailPage() {
   const [err, setErr] = useState<string | null>(null);
   const [archiving, setArchiving] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [woProgress, setWoProgress] = useState<WorkOrderStatusRow[]>([]);
 
   useEffect(() => {
     async function load() {
@@ -49,12 +53,17 @@ export default function ReportDetailPage() {
         .select("id, name, start_date, end_date, status, created_at")
         .eq("id", reportId)
         .single();
+      const { data: woData } = await supabase
+        .from("work_orders")
+        .select("status")
+        .eq("report_id", reportId);
 
       if (error) {
         setErr(error.message);
         setReport(null);
       } else {
         setReport(data as ReportRow);
+        setWoProgress((woData ?? []) as WorkOrderStatusRow[]);
       }
 
       setLoading(false);
@@ -177,6 +186,11 @@ export default function ReportDetailPage() {
       : report.status === "cancelled"
       ? "status-cancelled"
       : "status-open";
+  const total = woProgress.length;
+  const completed = woProgress.filter((w) => w.status === "complete").length;
+  const cancelled = woProgress.filter((w) => w.status === "cancelled").length;
+  const open = total - completed - cancelled;
+  const pct = total === 0 ? 0 : Math.round((completed / total) * 100);
 
   return (
     <div className="grid" style={{ maxWidth: 920 }}>
@@ -223,6 +237,19 @@ export default function ReportDetailPage() {
               {deleting ? "Deleting..." : "Delete report"}
             </button>
           ) : null}
+        </div>
+
+        <div className="title-row" style={{ alignItems: "center" }}>
+          <div className="muted" style={{ fontSize: "0.9rem" }}>
+            {completed} complete | {open} open | {cancelled} cancelled | {total} total
+          </div>
+          <div className="muted" style={{ fontSize: "0.9rem", fontWeight: 600 }}>
+            {pct}% complete
+          </div>
+        </div>
+
+        <div className="progress-track">
+          <div className="progress-fill" style={{ width: `${pct}%` }} />
         </div>
       </div>
 

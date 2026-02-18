@@ -50,7 +50,6 @@ export default function WorkOrderDetailPage() {
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState<string | null>(null);
 
-  const [allWos, setAllWos] = useState<Pick<WorkOrder, "id" | "status">[]>([]);
 
   const [comment, setComment] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -60,10 +59,12 @@ export default function WorkOrderDetailPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [signedMap, setSignedMap] = useState<Record<string, string>>({});
   const [cancelReason, setCancelReason] = useState("");
+  const [showCancelPrompt, setShowCancelPrompt] = useState(false);
   const [issuesComment, setIssuesComment] = useState("");
   const [issuesFiles, setIssuesFiles] = useState<File[]>([]);
   const [nextShutComment, setNextShutComment] = useState("");
   const [nextShutFiles, setNextShutFiles] = useState<File[]>([]);
+  const maxPhotosPerWo = 6;
 
   async function load() {
     setLoading(true);
@@ -80,13 +81,6 @@ export default function WorkOrderDetailPage() {
       setLoading(false);
       return;
     }
-
-    const { data: allData, error: allErr } = await supabase
-      .from("work_orders")
-      .select("id, status")
-      .eq("report_id", woData.report_id);
-
-    if (!allErr) setAllWos((allData ?? []) as Pick<WorkOrder, "id" | "status">[]);
 
     const { data: updData, error: updErr } = await supabase
       .from("wo_updates")
@@ -131,21 +125,22 @@ export default function WorkOrderDetailPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allPhotoPaths]);
 
-  const total = allWos.length;
-  const completed = allWos.filter((w) => w.status === "complete").length;
-  const cancelled = allWos.filter((w) => w.status === "cancelled").length;
-  const open = total - completed - cancelled;
-  const pct = total === 0 ? 0 : Math.round((completed / total) * 100);
-
   async function updateStatus(status: WorkOrder["status"]) {
     if (!wo) return;
 
+    if (status === "cancelled") {
+      setShowCancelPrompt(true);
+      setErr(null);
+      return;
+    }
+
+    setShowCancelPrompt(false);
     const { error } = await supabase
       .from("work_orders")
       .update({
         status,
         completed_at: status === "complete" ? new Date().toISOString() : null,
-        cancelled_reason: status !== "cancelled" ? null : wo.cancelled_reason,
+        cancelled_reason: null,
       })
       .eq("id", wo.id);
 
@@ -154,6 +149,32 @@ export default function WorkOrderDetailPage() {
       return;
     }
 
+    await load();
+  }
+
+  async function confirmCancelStatus() {
+    if (!wo) return;
+    const reason = cancelReason.trim();
+    if (!reason) {
+      setErr("Please enter a cancellation reason.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("work_orders")
+      .update({
+        status: "cancelled",
+        completed_at: null,
+        cancelled_reason: reason,
+      })
+      .eq("id", wo.id);
+
+    if (error) {
+      setErr(error.message);
+      return;
+    }
+
+    setShowCancelPrompt(false);
     await load();
   }
 
@@ -194,6 +215,15 @@ export default function WorkOrderDetailPage() {
     const chosenFiles = isUpdate ? files : isIssue ? issuesFiles : nextShutFiles;
     const rawComment = isUpdate ? comment : isIssue ? issuesComment : nextShutComment;
     const photoPaths: string[] = [];
+    const existingPhotoCount = updates.reduce((n, u) => n + (u.photo_urls?.length ?? 0), 0);
+
+    if (existingPhotoCount + chosenFiles.length > maxPhotosPerWo) {
+      if (isUpdate) setSaving(false);
+      if (isIssue) setSavingIssues(false);
+      if (!isUpdate && !isIssue) setSavingNextShut(false);
+      setErr(`Photo limit reached. Max ${maxPhotosPerWo} photos per work order.`);
+      return;
+    }
 
     for (const file of chosenFiles) {
       const safeName = file.name.replace(/\s+/g, "_");
@@ -258,6 +288,21 @@ export default function WorkOrderDetailPage() {
   const generalUpdates = updates.filter((u) => getEntryKind(u.comment) === "update");
   const issueEntries = updates.filter((u) => getEntryKind(u.comment) === "issue");
   const nextShutEntries = updates.filter((u) => getEntryKind(u.comment) === "next");
+  const existingPhotoCount = updates.reduce((n, u) => n + (u.photo_urls?.length ?? 0), 0);
+  const remainingPhotoSlots = Math.max(maxPhotosPerWo - existingPhotoCount, 0);
+
+  function addFilesWithLimit(current: File[], picked: File[]) {
+    const allowed = Math.max(remainingPhotoSlots - current.length, 0);
+    if (allowed <= 0) {
+      setErr(`Photo limit reached. Max ${maxPhotosPerWo} photos per work order.`);
+      return current;
+    }
+    const accepted = picked.slice(0, allowed);
+    if (picked.length > allowed) {
+      setErr(`Only ${maxPhotosPerWo} photos are allowed per work order.`);
+    }
+    return [...current, ...accepted];
+  }
 
   if (loading) return <p className="muted">Loading...</p>;
 
@@ -291,19 +336,6 @@ export default function WorkOrderDetailPage() {
           <span className={`status ${statusClass}`}>{wo.status}</span>
         </div>
 
-        <div className="title-row" style={{ alignItems: "center" }}>
-          <div className="muted" style={{ fontSize: "0.9rem" }}>
-            {completed} complete | {open} open | {cancelled} cancelled | {total} total
-          </div>
-          <div className="muted" style={{ fontSize: "0.9rem", fontWeight: 600 }}>
-            {pct}% complete
-          </div>
-        </div>
-
-        <div className="progress-track">
-          <div className="progress-fill" style={{ width: `${pct}%` }} />
-        </div>
-
         <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
           <span className="label">Actions</span>
           <button
@@ -323,11 +355,31 @@ export default function WorkOrderDetailPage() {
           <button
             className={`btn ${wo.status === "cancelled" ? "btn-active" : "btn-soft"}`}
             onClick={() => updateStatus("cancelled")}
-            disabled={wo.status === "cancelled"}
+            disabled={wo.status === "cancelled" && !showCancelPrompt}
           >
             Mark Cancelled
           </button>
         </div>
+
+        {showCancelPrompt ? (
+          <div className="grid" style={{ gap: "0.55rem" }}>
+            <textarea
+              className="textarea"
+              placeholder="Enter cancellation reason..."
+              value={cancelReason}
+              onChange={(e) => setCancelReason(e.target.value)}
+              rows={2}
+            />
+            <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
+              <button className="btn btn-danger" onClick={confirmCancelStatus}>
+                Confirm Cancel
+              </button>
+              <button className="btn btn-soft" onClick={() => setShowCancelPrompt(false)}>
+                Close
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         {wo.status === "cancelled" ? (
           <div className="grid" style={{ gap: "0.55rem" }}>
@@ -368,7 +420,7 @@ export default function WorkOrderDetailPage() {
               style={{ display: "none" }}
               onChange={(e) => {
                 const picked = Array.from(e.target.files ?? []);
-                if (picked.length) setFiles((prev) => [...prev, ...picked]);
+                if (picked.length) setFiles((prev) => addFilesWithLimit(prev, picked));
                 e.currentTarget.value = "";
               }}
             />
@@ -383,13 +435,14 @@ export default function WorkOrderDetailPage() {
               style={{ display: "none" }}
               onChange={(e) => {
                 const picked = Array.from(e.target.files ?? []);
-                if (picked.length) setFiles((prev) => [...prev, ...picked]);
+                if (picked.length) setFiles((prev) => addFilesWithLimit(prev, picked));
                 e.currentTarget.value = "";
               }}
             />
           </label>
 
           <span className="muted">Selected: {files.length}</span>
+          <span className="muted">WO photos remaining: {remainingPhotoSlots}</span>
         </div>
 
         <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
@@ -423,7 +476,7 @@ export default function WorkOrderDetailPage() {
               style={{ display: "none" }}
               onChange={(e) => {
                 const picked = Array.from(e.target.files ?? []);
-                if (picked.length) setIssuesFiles((prev) => [...prev, ...picked]);
+                if (picked.length) setIssuesFiles((prev) => addFilesWithLimit(prev, picked));
                 e.currentTarget.value = "";
               }}
             />
@@ -437,7 +490,7 @@ export default function WorkOrderDetailPage() {
               style={{ display: "none" }}
               onChange={(e) => {
                 const picked = Array.from(e.target.files ?? []);
-                if (picked.length) setIssuesFiles((prev) => [...prev, ...picked]);
+                if (picked.length) setIssuesFiles((prev) => addFilesWithLimit(prev, picked));
                 e.currentTarget.value = "";
               }}
             />
@@ -474,7 +527,7 @@ export default function WorkOrderDetailPage() {
               style={{ display: "none" }}
               onChange={(e) => {
                 const picked = Array.from(e.target.files ?? []);
-                if (picked.length) setNextShutFiles((prev) => [...prev, ...picked]);
+                if (picked.length) setNextShutFiles((prev) => addFilesWithLimit(prev, picked));
                 e.currentTarget.value = "";
               }}
             />
@@ -488,7 +541,7 @@ export default function WorkOrderDetailPage() {
               style={{ display: "none" }}
               onChange={(e) => {
                 const picked = Array.from(e.target.files ?? []);
-                if (picked.length) setNextShutFiles((prev) => [...prev, ...picked]);
+                if (picked.length) setNextShutFiles((prev) => addFilesWithLimit(prev, picked));
                 e.currentTarget.value = "";
               }}
             />
@@ -520,10 +573,20 @@ export default function WorkOrderDetailPage() {
             {u.photo_urls?.length ? (
               <div className="photo-grid" style={{ marginTop: "0.65rem" }}>
                 {u.photo_urls.map((path) => (
-                  <a key={path} href={signedMap[path] || "#"} target="_blank" rel="noreferrer">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={signedMap[path] || ""} alt="WO photo" className="photo-thumb" />
-                  </a>
+                  signedMap[path] ? (
+                    <a key={path} href={signedMap[path]} target="_blank" rel="noreferrer">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={signedMap[path]} alt="WO photo" className="photo-thumb" />
+                    </a>
+                  ) : (
+                    <div
+                      key={path}
+                      className="photo-thumb"
+                      style={{ display: "grid", placeItems: "center", color: "var(--muted)", fontSize: "0.8rem" }}
+                    >
+                      Loading photo...
+                    </div>
+                  )
                 ))}
               </div>
             ) : null}
@@ -544,10 +607,20 @@ export default function WorkOrderDetailPage() {
             {u.photo_urls?.length ? (
               <div className="photo-grid" style={{ marginTop: "0.65rem" }}>
                 {u.photo_urls.map((path) => (
-                  <a key={path} href={signedMap[path] || "#"} target="_blank" rel="noreferrer">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={signedMap[path] || ""} alt="Issue photo" className="photo-thumb" />
-                  </a>
+                  signedMap[path] ? (
+                    <a key={path} href={signedMap[path]} target="_blank" rel="noreferrer">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={signedMap[path]} alt="Issue photo" className="photo-thumb" />
+                    </a>
+                  ) : (
+                    <div
+                      key={path}
+                      className="photo-thumb"
+                      style={{ display: "grid", placeItems: "center", color: "var(--muted)", fontSize: "0.8rem" }}
+                    >
+                      Loading photo...
+                    </div>
+                  )
                 ))}
               </div>
             ) : null}
@@ -567,10 +640,20 @@ export default function WorkOrderDetailPage() {
             {u.photo_urls?.length ? (
               <div className="photo-grid" style={{ marginTop: "0.65rem" }}>
                 {u.photo_urls.map((path) => (
-                  <a key={path} href={signedMap[path] || "#"} target="_blank" rel="noreferrer">
-                    {/* eslint-disable-next-line @next/next/no-img-element */}
-                    <img src={signedMap[path] || ""} alt="Next shut photo" className="photo-thumb" />
-                  </a>
+                  signedMap[path] ? (
+                    <a key={path} href={signedMap[path]} target="_blank" rel="noreferrer">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={signedMap[path]} alt="Next shut photo" className="photo-thumb" />
+                    </a>
+                  ) : (
+                    <div
+                      key={path}
+                      className="photo-thumb"
+                      style={{ display: "grid", placeItems: "center", color: "var(--muted)", fontSize: "0.8rem" }}
+                    >
+                      Loading photo...
+                    </div>
+                  )
                 ))}
               </div>
             ) : null}

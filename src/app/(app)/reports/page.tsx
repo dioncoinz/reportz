@@ -199,20 +199,22 @@ export default function ReportsPage() {
               {r.start_date ?? "?"} {"->"} {r.end_date ?? "?"}
             </p>
 
-            <div style={{ marginTop: "0.9rem", display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
+            <div style={{ marginTop: "0.9rem", display: "flex", gap: "0.55rem", flexWrap: "wrap", alignItems: "center" }}>
               <Link className="btn btn-soft" href={`/reports/${r.id}`}>
                 Open report
               </Link>
-              {profile?.role === "manager" && !isArchivedReport(r) ? (
-                <button className="btn btn-danger" disabled={archivingId === r.id} onClick={() => archiveReport(r.id)}>
-                  {archivingId === r.id ? "Archiving..." : "Archive"}
-                </button>
-              ) : null}
-              {profile?.role === "manager" ? (
-                <button className="btn btn-danger" disabled={deletingId === r.id} onClick={() => deleteReport(r.id)}>
-                  {deletingId === r.id ? "Deleting..." : "Delete"}
-                </button>
-              ) : null}
+              <div style={{ marginLeft: "auto", display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
+                {profile?.role === "manager" && !isArchivedReport(r) ? (
+                  <button className="btn btn-danger" disabled={archivingId === r.id} onClick={() => archiveReport(r.id)}>
+                    {archivingId === r.id ? "Archiving..." : "Archive"}
+                  </button>
+                ) : null}
+                {profile?.role === "manager" ? (
+                  <button className="btn btn-danger" disabled={deletingId === r.id} onClick={() => deleteReport(r.id)}>
+                    {deletingId === r.id ? "Deleting..." : "Delete"}
+                  </button>
+                ) : null}
+              </div>
             </div>
           </div>
         ))}
