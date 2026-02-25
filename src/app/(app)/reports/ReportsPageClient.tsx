@@ -1,8 +1,7 @@
-export const dynamic = "force-dynamic";
+"use client";
 
-<<<<<<< HEAD
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
 import { useProfile } from "@/lib/useProfile";
 import { useSearchParams } from "next/navigation";
@@ -25,7 +24,7 @@ function displayReportName(name: string) {
   return name.startsWith(ARCHIVE_PREFIX) ? name.slice(ARCHIVE_PREFIX.length).trim() : name;
 }
 
-export default function ReportsPage() {
+function ReportsPageContent() {
   const supabase = createSupabaseBrowser();
   const { loading: profileLoading, profile } = useProfile();
   const searchParams = useSearchParams();
@@ -173,52 +172,52 @@ export default function ReportsPage() {
         {reports
           .filter((r) => (archivedView ? isArchivedReport(r) : !isArchivedReport(r)))
           .map((r) => (
-          <div key={r.id} className="section-card">
-            <div className="title-row">
-              <h3>{displayReportName(r.name)}</h3>
-              {(() => {
-                const archived = isArchivedReport(r);
-                return (
-              <span
-                className={`status status-${
-                  archived
-                    ? "archived"
-                    : r.status === "complete"
-                    ? "complete"
-                    : r.status === "cancelled"
-                    ? "cancelled"
-                    : "open"
-                }`}
-              >
-                {archived ? "archived" : r.status}
-              </span>
-                );
-              })()}
-            </div>
+            <div key={r.id} className="section-card">
+              <div className="title-row">
+                <h3>{displayReportName(r.name)}</h3>
+                {(() => {
+                  const archived = isArchivedReport(r);
+                  return (
+                    <span
+                      className={`status status-${
+                        archived
+                          ? "archived"
+                          : r.status === "complete"
+                          ? "complete"
+                          : r.status === "cancelled"
+                          ? "cancelled"
+                          : "open"
+                      }`}
+                    >
+                      {archived ? "archived" : r.status}
+                    </span>
+                  );
+                })()}
+              </div>
 
-            <p className="muted" style={{ margin: "0.5rem 0 0" }}>
-              {r.start_date ?? "?"} {"->"} {r.end_date ?? "?"}
-            </p>
+              <p className="muted" style={{ margin: "0.5rem 0 0" }}>
+                {r.start_date ?? "?"} {"->"} {r.end_date ?? "?"}
+              </p>
 
-            <div style={{ marginTop: "0.9rem", display: "flex", gap: "0.55rem", flexWrap: "wrap", alignItems: "center" }}>
-              <Link className="btn btn-soft" href={`/reports/${r.id}`}>
-                Open report
-              </Link>
-              <div style={{ marginLeft: "auto", display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
-                {profile?.role === "manager" && !isArchivedReport(r) ? (
-                  <button className="btn btn-danger" disabled={archivingId === r.id} onClick={() => archiveReport(r.id)}>
-                    {archivingId === r.id ? "Archiving..." : "Archive"}
-                  </button>
-                ) : null}
-                {profile?.role === "manager" ? (
-                  <button className="btn btn-danger" disabled={deletingId === r.id} onClick={() => deleteReport(r.id)}>
-                    {deletingId === r.id ? "Deleting..." : "Delete"}
-                  </button>
-                ) : null}
+              <div style={{ marginTop: "0.9rem", display: "flex", gap: "0.55rem", flexWrap: "wrap", alignItems: "center" }}>
+                <Link className="btn btn-soft" href={`/reports/${r.id}`}>
+                  Open report
+                </Link>
+                <div style={{ marginLeft: "auto", display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
+                  {profile?.role === "manager" && !isArchivedReport(r) ? (
+                    <button className="btn btn-danger" disabled={archivingId === r.id} onClick={() => archiveReport(r.id)}>
+                      {archivingId === r.id ? "Archiving..." : "Archive"}
+                    </button>
+                  ) : null}
+                  {profile?.role === "manager" ? (
+                    <button className="btn btn-danger" disabled={deletingId === r.id} onClick={() => deleteReport(r.id)}>
+                      {deletingId === r.id ? "Deleting..." : "Delete"}
+                    </button>
+                  ) : null}
+                </div>
               </div>
             </div>
-          </div>
-        ))}
+          ))}
 
         {!loading && reports.filter((r) => (archivedView ? isArchivedReport(r) : !isArchivedReport(r))).length === 0 ? (
           <p className="muted">
@@ -229,11 +228,12 @@ export default function ReportsPage() {
     </div>
   );
 }
-=======
-import ReportsPageClient from "@/app/(app)/reports/ReportsPageClient";
 
-export default function ReportsPage() {
-  return <ReportsPageClient />;
+export default function ReportsPageClient() {
+  return (
+    <Suspense fallback={<p className="muted">Loading reports...</p>}>
+      <ReportsPageContent />
+    </Suspense>
+  );
 }
 
->>>>>>> 3634794 (Fix Vercel /reports prerender by using server wrapper + dynamic route)
