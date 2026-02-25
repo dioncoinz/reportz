@@ -12,7 +12,7 @@ export type ClientSettingsRow = {
 };
 
 export const getClientSettings = cache(async (): Promise<ClientSettingsRow | null> => {
-  const supabase = createSupabaseServer();
+  const supabase = await createSupabaseServer();
   const { data, error } = await supabase
     .from("client_settings")
     .select("id, client_name, terminology, feature_flags, report_header, updated_at")

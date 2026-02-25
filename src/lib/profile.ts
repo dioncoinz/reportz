@@ -3,7 +3,7 @@ import { createSupabaseServer } from "@/lib/supabase/server";
 export type AppRole = "contributor" | "supervisor" | "manager";
 
 export async function getCurrentProfile() {
-  const supabase = createSupabaseServer();
+  const supabase = await createSupabaseServer();
 
   const { data: userRes, error: userErr } = await supabase.auth.getUser();
   if (userErr || !userRes.user) return { user: null, profile: null };

@@ -18,10 +18,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Missing file or reportId" }, { status: 400 });
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
+    const fileData = await file.arrayBuffer();
 
     const workbook = new ExcelJS.Workbook();
-    await workbook.xlsx.load(buffer);
+    await workbook.xlsx.load(fileData);
 
     const worksheet = workbook.worksheets[0];
     if (!worksheet) throw new Error("No worksheet found");
