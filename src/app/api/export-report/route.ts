@@ -440,13 +440,11 @@ export async function GET(req: NextRequest) {
 
     const comments = list.filter((u) => getEntryKind(u.comment) === "comments");
     const issues = list.filter((u) => getEntryKind(u.comment) === "issues");
-    const nextShut = list.filter((u) => getEntryKind(u.comment) === "next");
     const allPhotoPaths = list.flatMap((u) => u.photo_urls ?? []).slice(0, 6);
 
     const sections = [
       { title: "Comments", rows: comments, y: 2.05 },
       { title: "Issues", rows: issues, y: 3.9 },
-      { title: "Work required next shutdown", rows: nextShut, y: 5.75 },
     ] as const;
 
     for (const section of sections) {

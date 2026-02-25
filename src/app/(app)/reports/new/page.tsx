@@ -5,6 +5,7 @@ import { createSupabaseBrowser } from "@/lib/supabase/client";
 
 export default function NewReportPage() {
   const supabase = createSupabaseBrowser();
+  const [clientName, setClientName] = useState("");
   const [name, setName] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -40,7 +41,7 @@ export default function NewReportPage() {
       .from("reports")
       .insert({
         tenant_id: profile.tenant_id,
-        name,
+        name: `${clientName.trim()} ${name.trim()}`.trim(),
         start_date: startDate || null,
         end_date: endDate || null,
         created_by: user.id,
@@ -64,6 +65,16 @@ export default function NewReportPage() {
       <h1 style={{ marginBottom: "0.8rem" }}>New report</h1>
 
       <form onSubmit={createReport} className="grid">
+        <label className="field">
+          <span className="label">Client name</span>
+          <input
+            className="input"
+            placeholder="Valeron"
+            value={clientName}
+            onChange={(e) => setClientName(e.target.value)}
+          />
+        </label>
+
         <label className="field">
           <span className="label">Shutdown name</span>
           <input

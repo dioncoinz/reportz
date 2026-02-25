@@ -26,10 +26,9 @@ type UpdateRow = {
 const ISSUE_PREFIX = "__ISSUE__:";
 const NEXT_SHUT_PREFIX = "__NEXT_SHUT__:";
 
-function getEntryKind(comment: string | null): "issue" | "next" | "update" {
+function getEntryKind(comment: string | null): "issue" | "update" {
   if (!comment) return "update";
   if (comment.startsWith(ISSUE_PREFIX)) return "issue";
-  if (comment.startsWith(NEXT_SHUT_PREFIX)) return "next";
   return "update";
 }
 
@@ -55,15 +54,12 @@ export default function WorkOrderDetailPage() {
   const [files, setFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [savingIssues, setSavingIssues] = useState(false);
-  const [savingNextShut, setSavingNextShut] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [signedMap, setSignedMap] = useState<Record<string, string>>({});
   const [cancelReason, setCancelReason] = useState("");
   const [showCancelPrompt, setShowCancelPrompt] = useState(false);
   const [issuesComment, setIssuesComment] = useState("");
   const [issuesFiles, setIssuesFiles] = useState<File[]>([]);
-  const [nextShutComment, setNextShutComment] = useState("");
-  const [nextShutFiles, setNextShutFiles] = useState<File[]>([]);
   const maxPhotosPerWo = 6;
 
   async function load() {
@@ -192,13 +188,12 @@ export default function WorkOrderDetailPage() {
     setMsg("Reason saved");
   }
 
-  async function addEntry(kind: "update" | "issue" | "next") {
+  async function addEntry(kind: "update" | "issue") {
     const isUpdate = kind === "update";
     const isIssue = kind === "issue";
 
     if (isUpdate) setSaving(true);
     if (isIssue) setSavingIssues(true);
-    if (!isUpdate && !isIssue) setSavingNextShut(true);
 
     setMsg(null);
     setErr(null);
@@ -207,20 +202,20 @@ export default function WorkOrderDetailPage() {
     const user = userRes.user;
 
     if (userErr || !user) {
-      setSaving(false);
+      if (isUpdate) setSaving(false);
+      if (isIssue) setSavingIssues(false);
       setErr("You are not signed in.");
       return;
     }
 
-    const chosenFiles = isUpdate ? files : isIssue ? issuesFiles : nextShutFiles;
-    const rawComment = isUpdate ? comment : isIssue ? issuesComment : nextShutComment;
+    const chosenFiles = isUpdate ? files : issuesFiles;
+    const rawComment = isUpdate ? comment : issuesComment;
     const photoPaths: string[] = [];
     const existingPhotoCount = updates.reduce((n, u) => n + (u.photo_urls?.length ?? 0), 0);
 
     if (existingPhotoCount + chosenFiles.length > maxPhotosPerWo) {
       if (isUpdate) setSaving(false);
       if (isIssue) setSavingIssues(false);
-      if (!isUpdate && !isIssue) setSavingNextShut(false);
       setErr(`Photo limit reached. Max ${maxPhotosPerWo} photos per work order.`);
       return;
     }
@@ -237,7 +232,6 @@ export default function WorkOrderDetailPage() {
       if (upErr) {
         if (isUpdate) setSaving(false);
         if (isIssue) setSavingIssues(false);
-        if (!isUpdate && !isIssue) setSavingNextShut(false);
         setErr(`Photo upload failed: ${upErr.message}`);
         return;
       }
@@ -246,11 +240,7 @@ export default function WorkOrderDetailPage() {
     }
 
     const cleaned = rawComment.trim();
-    const taggedComment = isIssue
-      ? `${ISSUE_PREFIX} ${cleaned}`.trim()
-      : !isUpdate && !isIssue
-      ? `${NEXT_SHUT_PREFIX} ${cleaned}`.trim()
-      : cleaned;
+    const taggedComment = isIssue ? `${ISSUE_PREFIX} ${cleaned}`.trim() : cleaned;
 
     const { error: insErr } = await supabase.from("wo_updates").insert({
       work_order_id: woId,
@@ -262,7 +252,6 @@ export default function WorkOrderDetailPage() {
     if (insErr) {
       if (isUpdate) setSaving(false);
       if (isIssue) setSavingIssues(false);
-      if (!isUpdate && !isIssue) setSavingNextShut(false);
       setErr(insErr.message);
       return;
     }
@@ -270,24 +259,19 @@ export default function WorkOrderDetailPage() {
     if (isUpdate) {
       setComment("");
       setFiles([]);
-    } else if (isIssue) {
+    } else {
       setIssuesComment("");
       setIssuesFiles([]);
-    } else {
-      setNextShutComment("");
-      setNextShutFiles([]);
     }
 
-    setMsg(isUpdate ? "Update added" : isIssue ? "Issue saved" : "Next shut item saved");
+    setMsg(isUpdate ? "Update added" : "Issue saved");
     if (isUpdate) setSaving(false);
     if (isIssue) setSavingIssues(false);
-    if (!isUpdate && !isIssue) setSavingNextShut(false);
     await load();
   }
 
   const generalUpdates = updates.filter((u) => getEntryKind(u.comment) === "update");
   const issueEntries = updates.filter((u) => getEntryKind(u.comment) === "issue");
-  const nextShutEntries = updates.filter((u) => getEntryKind(u.comment) === "next");
   const existingPhotoCount = updates.reduce((n, u) => n + (u.photo_urls?.length ?? 0), 0);
   const remainingPhotoSlots = Math.max(maxPhotosPerWo - existingPhotoCount, 0);
 
@@ -508,57 +492,6 @@ export default function WorkOrderDetailPage() {
         </div>
       </div>
 
-      <div className="section-card grid" style={{ gap: "0.75rem" }}>
-        <h3>Work required next shut</h3>
-        <textarea
-          className="textarea"
-          value={nextShutComment}
-          onChange={(e) => setNextShutComment(e.target.value)}
-          placeholder="Describe work needed next shutdown..."
-          rows={3}
-        />
-        <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", alignItems: "center" }}>
-          <label className="btn btn-soft" style={{ cursor: "pointer" }}>
-            Take photo
-            <input
-              type="file"
-              accept="image/*"
-              capture="environment"
-              style={{ display: "none" }}
-              onChange={(e) => {
-                const picked = Array.from(e.target.files ?? []);
-                if (picked.length) setNextShutFiles((prev) => addFilesWithLimit(prev, picked));
-                e.currentTarget.value = "";
-              }}
-            />
-          </label>
-          <label className="btn btn-soft" style={{ cursor: "pointer" }}>
-            Add photos
-            <input
-              type="file"
-              multiple
-              accept="image/*"
-              style={{ display: "none" }}
-              onChange={(e) => {
-                const picked = Array.from(e.target.files ?? []);
-                if (picked.length) setNextShutFiles((prev) => addFilesWithLimit(prev, picked));
-                e.currentTarget.value = "";
-              }}
-            />
-          </label>
-          <span className="muted">Selected: {nextShutFiles.length}</span>
-        </div>
-        <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
-          <button
-            className="btn btn-primary"
-            onClick={() => addEntry("next")}
-            disabled={savingNextShut || (!nextShutComment.trim() && nextShutFiles.length === 0)}
-          >
-            {savingNextShut ? "Saving..." : "Save next shut work"}
-          </button>
-        </div>
-      </div>
-
       <div className="grid">
         <h3>Comments</h3>
 
@@ -629,38 +562,6 @@ export default function WorkOrderDetailPage() {
         {issueEntries.length === 0 ? <p className="muted">No issues logged yet.</p> : null}
       </div>
 
-      <div className="grid">
-        <h3>Work Required Next Shut</h3>
-        {nextShutEntries.map((u) => (
-          <div key={u.id} className="section-card" style={{ padding: "0.85rem" }}>
-            <div className="muted" style={{ fontSize: "0.78rem" }}>
-              {new Date(u.created_at).toLocaleString()}
-            </div>
-            {u.comment ? <div style={{ marginTop: "0.45rem" }}>{stripEntryPrefix(u.comment)}</div> : null}
-            {u.photo_urls?.length ? (
-              <div className="photo-grid" style={{ marginTop: "0.65rem" }}>
-                {u.photo_urls.map((path) => (
-                  signedMap[path] ? (
-                    <a key={path} href={signedMap[path]} target="_blank" rel="noreferrer">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={signedMap[path]} alt="Next shut photo" className="photo-thumb" />
-                    </a>
-                  ) : (
-                    <div
-                      key={path}
-                      className="photo-thumb"
-                      style={{ display: "grid", placeItems: "center", color: "var(--muted)", fontSize: "0.8rem" }}
-                    >
-                      Loading photo...
-                    </div>
-                  )
-                ))}
-              </div>
-            ) : null}
-          </div>
-        ))}
-        {nextShutEntries.length === 0 ? <p className="muted">No next shut work logged yet.</p> : null}
-      </div>
     </div>
   );
 }
