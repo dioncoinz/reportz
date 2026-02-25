@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { Suspense, useEffect, useState } from "react";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
 import { useProfile } from "@/lib/useProfile";
 import { useSearchParams } from "next/navigation";
@@ -24,7 +24,7 @@ function displayReportName(name: string) {
   return name.startsWith(ARCHIVE_PREFIX) ? name.slice(ARCHIVE_PREFIX.length).trim() : name;
 }
 
-export default function ReportsPage() {
+function ReportsPageContent() {
   const supabase = createSupabaseBrowser();
   const { loading: profileLoading, profile } = useProfile();
   const searchParams = useSearchParams();
@@ -226,5 +226,13 @@ export default function ReportsPage() {
         ) : null}
       </div>
     </div>
+  );
+}
+
+export default function ReportsPage() {
+  return (
+    <Suspense fallback={<p className="muted">Loading reports...</p>}>
+      <ReportsPageContent />
+    </Suspense>
   );
 }
