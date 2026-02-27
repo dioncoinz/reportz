@@ -40,6 +40,7 @@ type UpdateRow = {
 
 const ISSUE_PREFIX = "__ISSUE__:";
 const NEXT_SHUT_PREFIX = "__NEXT_SHUT__:";
+const exportOwnerUserId = process.env.EXPORT_OWNER_USER_ID?.trim() ?? "";
 
 const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
@@ -103,6 +104,25 @@ function startMonthYear(dateStr: string | null) {
 }
 
 export async function GET(req: NextRequest) {
+  if (!exportOwnerUserId) {
+    return NextResponse.json({ error: "Export access is not configured." }, { status: 500 });
+  }
+
+  const authHeader = req.headers.get("authorization") ?? "";
+  const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+  if (!token) {
+    return NextResponse.json({ error: "Missing authorization token." }, { status: 401 });
+  }
+
+  const userClient = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!);
+  const { data: userRes, error: userErr } = await userClient.auth.getUser(token);
+  if (userErr || !userRes.user) {
+    return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
+  }
+  if (userRes.user.id !== exportOwnerUserId) {
+    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
+  }
+
   const id = req.nextUrl.searchParams.get("reportId");
   if (!id) return NextResponse.json({ error: "Missing reportId" }, { status: 400 });
 

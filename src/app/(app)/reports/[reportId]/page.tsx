@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
 import Link from "next/link";
 import { useProfile } from "@/lib/useProfile";
+import { isExportOwner } from "@/lib/export-access";
 
 type ReportRow = {
   id: string;
@@ -29,7 +30,7 @@ function displayReportName(name: string) {
 
 export default function ReportDetailPage() {
   const supabase = createSupabaseBrowser();
-  const { profile } = useProfile();
+  const { profile, userId } = useProfile();
   const params = useParams<{ reportId: string }>();
   const router = useRouter();
 
@@ -40,6 +41,7 @@ export default function ReportDetailPage() {
   const [archiving, setArchiving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [woProgress, setWoProgress] = useState<WorkOrderStatusRow[]>([]);
+  const canAccessExports = isExportOwner(userId);
 
   useEffect(() => {
     async function load() {
@@ -145,6 +147,37 @@ export default function ReportDetailPage() {
     router.push("/reports");
   }
 
+  async function exportPowerPoint() {
+    if (!report || !canAccessExports) return;
+
+    const { data: sessionRes } = await supabase.auth.getSession();
+    const token = sessionRes.session?.access_token;
+    if (!token) {
+      setErr("You are not signed in.");
+      return;
+    }
+
+    const res = await fetch(`/api/export-report?reportId=${report.id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}));
+      setErr(json.error ?? "Export failed.");
+      return;
+    }
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${displayReportName(report.name)}.pptx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
   if (!reportId) return <p className="muted">Missing report id.</p>;
   if (loading) return <p className="muted">Loading report...</p>;
 
@@ -218,15 +251,16 @@ export default function ReportDetailPage() {
           <Link className="btn btn-soft" href={`/reports/${report.id}/work-orders`}>
             Work Orders
           </Link>
-          <Link className="btn btn-soft" href={`/reports/${report.id}/exports`}>
-            Exports
-          </Link>
-          <button
-            className="btn"
-            onClick={() => window.open(`/api/export-report?reportId=${report.id}`, "_blank")}
-          >
-            Export PowerPoint
-          </button>
+          {canAccessExports ? (
+            <Link className="btn btn-soft" href={`/reports/${report.id}/exports`}>
+              Exports
+            </Link>
+          ) : null}
+          {canAccessExports ? (
+            <button className="btn" onClick={exportPowerPoint}>
+              Export PowerPoint
+            </button>
+          ) : null}
           {profile?.role === "manager" && !isArchivedReport(report) ? (
             <button className="btn btn-danger" onClick={archiveCurrentReport} disabled={archiving}>
               {archiving ? "Archiving..." : "Archive report"}

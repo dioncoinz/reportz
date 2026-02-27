@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
 import { useProfile } from "@/lib/useProfile";
+import { isExportOwner } from "@/lib/export-access";
 
 type Branding = {
   tenant_id: string;
@@ -18,7 +19,8 @@ type Branding = {
 export default function ExportsPage() {
   const supabase = createSupabaseBrowser();
   const { reportId } = useParams<{ reportId: string }>();
-  const { loading: pLoading, profile } = useProfile();
+  const { loading: pLoading, profile, userId } = useProfile();
+  const canAccessExports = isExportOwner(userId);
 
   const [branding, setBranding] = useState<Branding | null>(null);
   const [saving, setSaving] = useState(false);
@@ -54,7 +56,7 @@ export default function ExportsPage() {
   }, [pLoading, profile?.tenant_id]);
 
   async function saveBranding() {
-    if (!profile?.tenant_id) return;
+    if (!profile?.tenant_id || !canAccessExports) return;
 
     setSaving(true);
     setMsg(null);
@@ -108,12 +110,40 @@ export default function ExportsPage() {
     }
   }
 
-  function exportWord() {
-    window.open(`/api/export-report?reportId=${reportId}`, "_blank");
+  async function exportWord() {
+    if (!canAccessExports) return;
+
+    const { data: sessionRes } = await supabase.auth.getSession();
+    const token = sessionRes.session?.access_token;
+    if (!token) {
+      setMsg("You are not signed in.");
+      return;
+    }
+
+    const res = await fetch(`/api/export-report?reportId=${reportId}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}));
+      setMsg(`Export failed: ${json.error ?? "unknown error"}`);
+      return;
+    }
+
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "report.pptx";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   }
 
   if (pLoading) return <p className="muted">Loading...</p>;
   if (!profile?.tenant_id) return <p className="muted">Tenant not set on your profile.</p>;
+  if (!canAccessExports) return <p className="muted">You do not have access to exports.</p>;
 
   return (
     <div className="grid" style={{ maxWidth: 960 }}>
