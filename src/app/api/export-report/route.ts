@@ -40,7 +40,6 @@ type UpdateRow = {
 
 const ISSUE_PREFIX = "__ISSUE__:";
 const NEXT_SHUT_PREFIX = "__NEXT_SHUT__:";
-const exportOwnerUserId = process.env.EXPORT_OWNER_USER_ID?.trim() ?? "";
 
 const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
@@ -104,10 +103,6 @@ function startMonthYear(dateStr: string | null) {
 }
 
 export async function GET(req: NextRequest) {
-  if (!exportOwnerUserId) {
-    return NextResponse.json({ error: "Export access is not configured." }, { status: 500 });
-  }
-
   const authHeader = req.headers.get("authorization") ?? "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
   if (!token) {
@@ -119,9 +114,7 @@ export async function GET(req: NextRequest) {
   if (userErr || !userRes.user) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
-  if (userRes.user.id !== exportOwnerUserId) {
-    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
-  }
+  const userId = userRes.user.id;
 
   const id = req.nextUrl.searchParams.get("reportId");
   if (!id) return NextResponse.json({ error: "Missing reportId" }, { status: 400 });
@@ -134,6 +127,18 @@ export async function GET(req: NextRequest) {
 
   if (reportErr || !report) {
     return NextResponse.json({ error: reportErr?.message ?? "Report not found" }, { status: 404 });
+  }
+
+  const { data: profile, error: profileErr } = await supabase
+    .from("profiles")
+    .select("tenant_id")
+    .eq("id", userId)
+    .single<{ tenant_id: string | null }>();
+  if (profileErr || !profile?.tenant_id) {
+    return NextResponse.json({ error: "Profile tenant not set." }, { status: 403 });
+  }
+  if (profile.tenant_id !== report.tenant_id) {
+    return NextResponse.json({ error: "Forbidden." }, { status: 403 });
   }
 
   const { data: branding } = await supabase

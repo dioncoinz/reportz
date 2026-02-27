@@ -41,7 +41,7 @@ export default function ReportDetailPage() {
   const [archiving, setArchiving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [woProgress, setWoProgress] = useState<WorkOrderStatusRow[]>([]);
-  const canAccessExports = isExportOwner(userId);
+  const canManageExportTemplate = isExportOwner(userId);
 
   useEffect(() => {
     async function load() {
@@ -148,7 +148,7 @@ export default function ReportDetailPage() {
   }
 
   async function exportPowerPoint() {
-    if (!report || !canAccessExports) return;
+    if (!report) return;
 
     const { data: sessionRes } = await supabase.auth.getSession();
     const token = sessionRes.session?.access_token;
@@ -251,16 +251,14 @@ export default function ReportDetailPage() {
           <Link className="btn btn-soft" href={`/reports/${report.id}/work-orders`}>
             Work Orders
           </Link>
-          {canAccessExports ? (
+          {canManageExportTemplate ? (
             <Link className="btn btn-soft" href={`/reports/${report.id}/exports`}>
               Exports
             </Link>
           ) : null}
-          {canAccessExports ? (
-            <button className="btn" onClick={exportPowerPoint}>
-              Export PowerPoint
-            </button>
-          ) : null}
+          <button className="btn" onClick={exportPowerPoint}>
+            Export PowerPoint
+          </button>
           {profile?.role === "manager" && !isArchivedReport(report) ? (
             <button className="btn btn-danger" onClick={archiveCurrentReport} disabled={archiving}>
               {archiving ? "Archiving..." : "Archive report"}
