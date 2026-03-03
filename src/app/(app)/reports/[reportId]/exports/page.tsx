@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
 import { useProfile } from "@/lib/useProfile";
-import { canManageBranding } from "@/lib/roles";
+import { canAccessExportSettings, canManageBranding } from "@/lib/roles";
 
 type Branding = {
   tenant_id: string;
@@ -21,6 +21,7 @@ export default function ExportsPage() {
   const { reportId } = useParams<{ reportId: string }>();
   const { loading: pLoading, profile } = useProfile();
   const canEditBranding = canManageBranding(profile?.role);
+  const canOpenExports = canAccessExportSettings(profile?.role);
 
   const [branding, setBranding] = useState<Branding | null>(null);
   const [saving, setSaving] = useState(false);
@@ -116,6 +117,7 @@ export default function ExportsPage() {
 
   if (pLoading) return <p className="muted">Loading...</p>;
   if (!profile?.tenant_id) return <p className="muted">Tenant not set on your profile.</p>;
+  if (!canOpenExports) return <p className="muted">Only owners can access export settings.</p>;
 
   return (
     <div className="grid" style={{ maxWidth: 960 }}>

@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
 import Link from "next/link";
 import { useProfile } from "@/lib/useProfile";
-import { hasManagerAccess } from "@/lib/roles";
+import { canAccessExportSettings, canExportPowerPoint, hasManagerAccess } from "@/lib/roles";
 
 type ReportRow = {
   id: string;
@@ -219,15 +219,19 @@ export default function ReportDetailPage() {
           <Link className="btn btn-soft" href={`/reports/${report.id}/work-orders`}>
             Work Orders
           </Link>
-          <Link className="btn btn-soft" href={`/reports/${report.id}/exports`}>
-            Exports
-          </Link>
-          <button
-            className="btn"
-            onClick={() => window.open(`/api/export-report?reportId=${report.id}`, "_blank")}
-          >
-            Export PowerPoint
-          </button>
+          {canAccessExportSettings(profile?.role) ? (
+            <Link className="btn btn-soft" href={`/reports/${report.id}/exports`}>
+              Exports
+            </Link>
+          ) : null}
+          {canExportPowerPoint(profile?.role) ? (
+            <button
+              className="btn"
+              onClick={() => window.open(`/api/export-report?reportId=${report.id}`, "_blank")}
+            >
+              Export PowerPoint
+            </button>
+          ) : null}
           {hasManagerAccess(profile?.role) && !isArchivedReport(report) ? (
             <button className="btn btn-danger" onClick={archiveCurrentReport} disabled={archiving}>
               {archiving ? "Archiving..." : "Archive report"}
