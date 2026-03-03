@@ -99,8 +99,8 @@ export default function AdminUsersPage() {
           <span className="label">Role</span>
           <select className="select" value={role} onChange={(e) => setRole(e.target.value as AppRole)}>
             <option value="contributor">{roleLabel("contributor")}</option>
-            {profile?.role !== "supervisor" ? <option value="supervisor">{roleLabel("supervisor")}</option> : null}
-            {profile?.role !== "supervisor" ? <option value="manager">{roleLabel("manager")}</option> : null}
+            {canAssignRole(profile?.role, "supervisor") ? <option value="supervisor">{roleLabel("supervisor")}</option> : null}
+            {canAssignRole(profile?.role, "manager") ? <option value="manager">{roleLabel("manager")}</option> : null}
             {isOwner(profile?.role) ? <option value="owner">{roleLabel("owner")}</option> : null}
           </select>
         </label>
