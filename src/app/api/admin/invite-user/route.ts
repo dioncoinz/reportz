@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { requireEnv } from "@/lib/env";
+import type { AppRole } from "@/lib/roles";
+import { canAccessUserAdmin, canAssignRole } from "@/lib/roles";
 
-type AppRole = "contributor" | "supervisor" | "manager";
-
-const allowedRoles: AppRole[] = ["contributor", "supervisor", "manager"];
+const allowedRoles: AppRole[] = ["contributor", "supervisor", "manager", "owner"];
 
 export async function POST(req: NextRequest) {
   const supabaseUrl = requireEnv("NEXT_PUBLIC_SUPABASE_URL");
@@ -33,8 +33,8 @@ export async function POST(req: NextRequest) {
   if (actorProfileErr || !actorProfile?.tenant_id) {
     return NextResponse.json({ error: "Profile tenant_id not set." }, { status: 403 });
   }
-  if (actorProfile.role !== "manager") {
-    return NextResponse.json({ error: "Only managers can invite users." }, { status: 403 });
+  if (!canAccessUserAdmin(actorProfile.role)) {
+    return NextResponse.json({ error: "Only managers and owners can invite users." }, { status: 403 });
   }
 
   const body = await req.json().catch(() => null);
@@ -51,6 +51,9 @@ export async function POST(req: NextRequest) {
   }
   if (!allowedRoles.includes(role)) {
     return NextResponse.json({ error: "Invalid role." }, { status: 400 });
+  }
+  if (!canAssignRole(actorProfile.role, role)) {
+    return NextResponse.json({ error: "You do not have permission to assign that role." }, { status: 403 });
   }
 
   const { data: created, error: createErr } = await adminClient.auth.admin.createUser({

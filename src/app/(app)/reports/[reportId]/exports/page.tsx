@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
 import { useProfile } from "@/lib/useProfile";
+import { canManageBranding } from "@/lib/roles";
 
 type Branding = {
   tenant_id: string;
@@ -19,6 +20,7 @@ export default function ExportsPage() {
   const supabase = createSupabaseBrowser();
   const { reportId } = useParams<{ reportId: string }>();
   const { loading: pLoading, profile } = useProfile();
+  const canEditBranding = canManageBranding(profile?.role);
 
   const [branding, setBranding] = useState<Branding | null>(null);
   const [saving, setSaving] = useState(false);
@@ -54,7 +56,7 @@ export default function ExportsPage() {
   }, [pLoading, profile?.tenant_id]);
 
   async function saveBranding() {
-    if (!profile?.tenant_id) return;
+    if (!profile?.tenant_id || !canEditBranding) return;
 
     setSaving(true);
     setMsg(null);
@@ -131,36 +133,38 @@ export default function ExportsPage() {
 
       <div className="section-card grid">
         <h2 style={{ marginBottom: "0.3rem" }}>Branding</h2>
+        {!canEditBranding ? <p className="muted">Only owners can edit export branding and templates.</p> : null}
 
         <label className="field">
           <span className="label">Company name</span>
-          <input className="input" value={companyName} onChange={(e) => setCompanyName(e.target.value)} />
+          <input className="input" value={companyName} onChange={(e) => setCompanyName(e.target.value)} disabled={!canEditBranding} />
         </label>
 
         <label className="field">
           <span className="label">Header text</span>
-          <input className="input" value={headerText} onChange={(e) => setHeaderText(e.target.value)} />
+          <input className="input" value={headerText} onChange={(e) => setHeaderText(e.target.value)} disabled={!canEditBranding} />
         </label>
 
         <label className="field">
           <span className="label">Footer text</span>
-          <input className="input" value={footerText} onChange={(e) => setFooterText(e.target.value)} />
+          <input className="input" value={footerText} onChange={(e) => setFooterText(e.target.value)} disabled={!canEditBranding} />
         </label>
 
         <label className="field" style={{ maxWidth: 260 }}>
           <span className="label">Accent color (hex)</span>
-          <input className="input" value={accentHex} onChange={(e) => setAccentHex(e.target.value)} />
+          <input className="input" value={accentHex} onChange={(e) => setAccentHex(e.target.value)} disabled={!canEditBranding} />
         </label>
 
         <label className="field">
           <span className="label">Logo (PNG recommended)</span>
           <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
-            <label className="btn btn-soft" style={{ cursor: "pointer", width: "fit-content" }}>
+            <label className="btn btn-soft" style={{ cursor: canEditBranding ? "pointer" : "default", width: "fit-content", opacity: canEditBranding ? 1 : 0.6 }}>
               Choose logo
               <input
                 type="file"
                 accept="image/*"
                 style={{ display: "none" }}
+                disabled={!canEditBranding}
                 onChange={(e) => setLogoFile(e.target.files?.[0] ?? null)}
               />
             </label>
@@ -169,7 +173,7 @@ export default function ExportsPage() {
         </label>
 
         <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
-          <button className="btn btn-primary" onClick={saveBranding} disabled={saving}>
+          <button className="btn btn-primary" onClick={saveBranding} disabled={saving || !canEditBranding}>
             {saving ? "Saving..." : "Save branding"}
           </button>
           {msg ? <span className={msg.toLowerCase().includes("failed") ? "error-text" : "muted"}>{msg}</span> : null}

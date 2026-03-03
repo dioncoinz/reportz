@@ -5,6 +5,7 @@ import { Suspense, useEffect, useState } from "react";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
 import { useProfile } from "@/lib/useProfile";
 import { useSearchParams } from "next/navigation";
+import { hasManagerAccess } from "@/lib/roles";
 
 type ReportRow = {
   id: string;
@@ -57,7 +58,7 @@ function ReportsPageContent() {
   }, [profileLoading]);
 
   async function archiveReport(reportId: string) {
-    if (profile?.role !== "manager") return;
+    if (!hasManagerAccess(profile?.role)) return;
 
     const ok = window.confirm("Archive this report? You can still open it later, but it will be marked archived.");
     if (!ok) return;
@@ -96,7 +97,7 @@ function ReportsPageContent() {
   }
 
   async function deleteReport(reportId: string) {
-    if (profile?.role !== "manager") return;
+    if (!hasManagerAccess(profile?.role)) return;
 
     const ok = window.confirm("Permanently delete this report and all its work orders/updates? This cannot be undone.");
     if (!ok) return;
@@ -204,12 +205,12 @@ function ReportsPageContent() {
                   Open report
                 </Link>
                 <div style={{ marginLeft: "auto", display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
-                  {profile?.role === "manager" && !isArchivedReport(r) ? (
+                  {hasManagerAccess(profile?.role) && !isArchivedReport(r) ? (
                     <button className="btn btn-danger" disabled={archivingId === r.id} onClick={() => archiveReport(r.id)}>
                       {archivingId === r.id ? "Archiving..." : "Archive"}
                     </button>
                   ) : null}
-                  {profile?.role === "manager" ? (
+                  {hasManagerAccess(profile?.role) ? (
                     <button className="btn btn-danger" disabled={deletingId === r.id} onClick={() => deleteReport(r.id)}>
                       {deletingId === r.id ? "Deleting..." : "Delete"}
                     </button>

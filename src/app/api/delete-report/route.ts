@@ -1,8 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { requireEnv } from "@/lib/env";
-
-type Role = "contributor" | "supervisor" | "manager";
+import type { AppRole } from "@/lib/roles";
+import { hasManagerAccess } from "@/lib/roles";
 
 export async function POST(req: NextRequest) {
   const supabaseUrl = requireEnv("NEXT_PUBLIC_SUPABASE_URL");
@@ -30,14 +30,14 @@ export async function POST(req: NextRequest) {
     .from("profiles")
     .select("tenant_id, role")
     .eq("id", user.id)
-    .single<{ tenant_id: string | null; role: Role }>();
+    .single<{ tenant_id: string | null; role: AppRole }>();
 
   if (profileErr || !profile?.tenant_id) {
     return NextResponse.json({ error: "Profile not found." }, { status: 403 });
   }
 
-  if (profile.role !== "manager") {
-    return NextResponse.json({ error: "Only managers can delete reports." }, { status: 403 });
+  if (!hasManagerAccess(profile.role)) {
+    return NextResponse.json({ error: "Only managers and owners can delete reports." }, { status: 403 });
   }
 
   const body = await req.json().catch(() => null);

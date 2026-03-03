@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
 import Link from "next/link";
 import { useProfile } from "@/lib/useProfile";
+import { hasManagerAccess } from "@/lib/roles";
 
 type ReportRow = {
   id: string;
@@ -73,7 +74,7 @@ export default function ReportDetailPage() {
   }, [reportId, supabase]);
 
   async function archiveCurrentReport() {
-    if (!report || profile?.role !== "manager") return;
+    if (!report || !hasManagerAccess(profile?.role)) return;
 
     const ok = window.confirm("Archive this report? You can still access it later.");
     if (!ok) return;
@@ -110,7 +111,7 @@ export default function ReportDetailPage() {
   }
 
   async function deleteCurrentReport() {
-    if (!report || profile?.role !== "manager") return;
+    if (!report || !hasManagerAccess(profile?.role)) return;
 
     const ok = window.confirm("Permanently delete this report and all related data? This cannot be undone.");
     if (!ok) return;
@@ -227,12 +228,12 @@ export default function ReportDetailPage() {
           >
             Export PowerPoint
           </button>
-          {profile?.role === "manager" && !isArchivedReport(report) ? (
+          {hasManagerAccess(profile?.role) && !isArchivedReport(report) ? (
             <button className="btn btn-danger" onClick={archiveCurrentReport} disabled={archiving}>
               {archiving ? "Archiving..." : "Archive report"}
             </button>
           ) : null}
-          {profile?.role === "manager" ? (
+          {hasManagerAccess(profile?.role) ? (
             <button className="btn btn-danger" onClick={deleteCurrentReport} disabled={deleting}>
               {deleting ? "Deleting..." : "Delete report"}
             </button>

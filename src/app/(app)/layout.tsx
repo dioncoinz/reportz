@@ -5,6 +5,7 @@ import { useProfile } from "@/lib/useProfile";
 import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
+import { canAccessUserAdmin } from "@/lib/roles";
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { loading, profile, userId } = useProfile();
@@ -36,7 +37,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <Link className="nav-link" href="/reports/new">
               New
             </Link>
-            {profile?.role === "manager" ? (
+            {canAccessUserAdmin(profile?.role) ? (
               <Link className="nav-link" href="/admin/users">
                 Admin
               </Link>
