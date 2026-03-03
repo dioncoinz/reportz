@@ -7,6 +7,11 @@ import { usePathname, useRouter } from "next/navigation";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
 import { canAccessUserAdmin } from "@/lib/roles";
 
+function formatRole(role: string | null | undefined) {
+  if (!role) return "";
+  return role.charAt(0).toUpperCase() + role.slice(1);
+}
+
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { loading, profile, userId } = useProfile();
   const router = useRouter();
@@ -49,7 +54,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               "Loading..."
             ) : profile ? (
               <>
-                {profile.full_name || "User"} | {profile.role} | tenant: {profile.tenant_id ? "set" : "NOT SET"}
+                {profile.full_name || "User"} | {formatRole(profile.role)}
                 {" | "}
                 <button className="btn btn-soft" onClick={logout}>
                   Logout
