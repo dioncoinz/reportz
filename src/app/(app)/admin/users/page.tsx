@@ -17,6 +17,10 @@ export default function AdminUsersPage() {
   const [saving, setSaving] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
+  function roleLabel(value: AppRole) {
+    return value.charAt(0).toUpperCase() + value.slice(1);
+  }
+
   async function inviteUser(e: React.FormEvent) {
     e.preventDefault();
     setSaving(true);
@@ -69,7 +73,7 @@ export default function AdminUsersPage() {
   if (loading) return <p className="muted">Loading...</p>;
 
   if (!canAccessUserAdmin(profile?.role)) {
-    return <p className="muted">Only managers and owners can access user admin.</p>;
+    return <p className="muted">Only supervisors, managers, and owners can access user admin.</p>;
   }
 
   return (
@@ -94,10 +98,10 @@ export default function AdminUsersPage() {
         <label className="field">
           <span className="label">Role</span>
           <select className="select" value={role} onChange={(e) => setRole(e.target.value as AppRole)}>
-            <option value="contributor">contributor</option>
-            <option value="supervisor">supervisor</option>
-            <option value="manager">manager</option>
-            {isOwner(profile?.role) ? <option value="owner">owner</option> : null}
+            <option value="contributor">{roleLabel("contributor")}</option>
+            {profile?.role !== "supervisor" ? <option value="supervisor">{roleLabel("supervisor")}</option> : null}
+            {profile?.role !== "supervisor" ? <option value="manager">{roleLabel("manager")}</option> : null}
+            {isOwner(profile?.role) ? <option value="owner">{roleLabel("owner")}</option> : null}
           </select>
         </label>
 
