@@ -1,15 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import ExcelJS from "exceljs";
 import { createClient } from "@supabase/supabase-js";
-
-// Use service role ONLY inside server routes
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+import { requireEnv } from "@/lib/env";
 
 export async function POST(req: NextRequest) {
   try {
+    const supabase = createClient(
+      requireEnv("NEXT_PUBLIC_SUPABASE_URL"),
+      requireEnv("SUPABASE_SERVICE_ROLE_KEY")
+    );
+
     const formData = await req.formData();
     const file = formData.get("file") as File;
     const reportId = formData.get("reportId") as string;

@@ -3,6 +3,7 @@ export const runtime = "nodejs";
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import PptxGenJS from "pptxgenjs";
+import { requireEnv } from "@/lib/env";
 
 type ReportRow = {
   id: string;
@@ -41,8 +42,6 @@ type UpdateRow = {
 const ISSUE_PREFIX = "__ISSUE__:";
 const NEXT_SHUT_PREFIX = "__NEXT_SHUT__:";
 
-const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
-
 function safe(name: string) {
   return name.replace(/[<>:"/\\|?*]/g, "").slice(0, 80);
 }
@@ -65,6 +64,7 @@ function imageMimeFromPath(path: string) {
 }
 
 async function file(bucket: string, path: string) {
+  const supabase = createClient(requireEnv("NEXT_PUBLIC_SUPABASE_URL"), requireEnv("SUPABASE_SERVICE_ROLE_KEY"));
   const { data } = await supabase.storage.from(bucket).download(path);
   if (!data) return null;
   return Buffer.from(await data.arrayBuffer());
@@ -103,6 +103,7 @@ function startMonthYear(dateStr: string | null) {
 }
 
 export async function GET(req: NextRequest) {
+  const supabase = createClient(requireEnv("NEXT_PUBLIC_SUPABASE_URL"), requireEnv("SUPABASE_SERVICE_ROLE_KEY"));
   const id = req.nextUrl.searchParams.get("reportId");
   if (!id) return NextResponse.json({ error: "Missing reportId" }, { status: 400 });
 
