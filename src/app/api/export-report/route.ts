@@ -208,7 +208,7 @@ async function fetchAllWorkOrders(
       return { rows: [], error: page.error.message };
     }
 
-    const chunk = (page.data ?? []) as Array<Omit<WorkOrderRow, "emergent_work"> & { emergent_work?: boolean }>;
+    const chunk = (page.data ?? []) as unknown as Array<Omit<WorkOrderRow, "emergent_work"> & { emergent_work?: boolean }>;
     if (!chunk.length) break;
 
     rows.push(
