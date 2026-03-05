@@ -2,6 +2,7 @@ export const runtime = "nodejs";
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import PptxGenJS from "pptxgenjs";
 import { requireEnv } from "@/lib/env";
 
@@ -172,7 +173,7 @@ function isMissingColumnError(err: unknown, column: string) {
 }
 
 async function fetchAllWorkOrders(
-  supabase: ReturnType<typeof createClient>,
+  supabase: SupabaseClient,
   reportId: string
 ): Promise<{ rows: WorkOrderRow[]; error: string | null }> {
   const pageSize = 1000;
