@@ -9,6 +9,7 @@ export default function NewReportPage() {
   const [name, setName] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [keyPersonnel, setKeyPersonnel] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -44,6 +45,7 @@ export default function NewReportPage() {
         name: `${clientName.trim()} ${name.trim()}`.trim(),
         start_date: startDate || null,
         end_date: endDate || null,
+        key_personnel: keyPersonnel.trim() || null,
         created_by: user.id,
         status: "draft",
       })
@@ -94,6 +96,17 @@ export default function NewReportPage() {
         <label className="field">
           <span className="label">End date</span>
           <input className="input" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+        </label>
+
+        <label className="field">
+          <span className="label">Key personnel (shown on export front page)</span>
+          <textarea
+            className="textarea"
+            value={keyPersonnel}
+            onChange={(e) => setKeyPersonnel(e.target.value)}
+            rows={4}
+            placeholder="Enter key personnel names/roles (one per line or comma separated)"
+          />
         </label>
 
         <button className="btn btn-primary" disabled={loading}>
