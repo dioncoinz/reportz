@@ -17,6 +17,7 @@ type ReportRow = {
 };
 type WorkOrderStatusRow = {
   status: "open" | "complete" | "cancelled";
+  emergent_work: boolean;
 };
 const ARCHIVE_PREFIX = "[ARCHIVED] ";
 
@@ -54,17 +55,26 @@ export default function ReportDetailPage() {
         .select("id, name, start_date, end_date, status, created_at")
         .eq("id", reportId)
         .single();
-      const { data: woData } = await supabase
-        .from("work_orders")
-        .select("status")
-        .eq("report_id", reportId);
+      const { data: sessionRes, error: sessionErr } = await supabase.auth.getSession();
+      const token = sessionRes.session?.access_token;
+      let woData: WorkOrderStatusRow[] = [];
+      if (!sessionErr && token) {
+        const woRes = await fetch(`/api/report-work-orders?reportId=${reportId}`, {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const woJson = await woRes.json().catch(() => ({}));
+        if (woRes.ok) {
+          woData = ((woJson.workOrders ?? []) as Array<{ status: "open" | "complete" | "cancelled"; emergent_work: boolean }>)
+            .map((w) => ({ status: w.status, emergent_work: w.emergent_work }));
+        }
+      }
 
       if (error) {
         setErr(error.message);
         setReport(null);
       } else {
         setReport(data as ReportRow);
-        setWoProgress((woData ?? []) as WorkOrderStatusRow[]);
+        setWoProgress(woData);
       }
 
       setLoading(false);
@@ -190,6 +200,7 @@ export default function ReportDetailPage() {
   const total = woProgress.length;
   const completed = woProgress.filter((w) => w.status === "complete").length;
   const cancelled = woProgress.filter((w) => w.status === "cancelled").length;
+  const emergent = woProgress.filter((w) => w.emergent_work).length;
   const open = total - completed - cancelled;
   const pct = total === 0 ? 0 : Math.round((completed / total) * 100);
 
@@ -246,7 +257,7 @@ export default function ReportDetailPage() {
 
         <div className="title-row" style={{ alignItems: "center" }}>
           <div className="muted" style={{ fontSize: "0.9rem" }}>
-            {completed} complete | {open} open | {cancelled} cancelled | {total} total
+            {completed} complete | {open} open | {cancelled} cancelled | {emergent} emergent | {total} total
           </div>
           <div className="muted" style={{ fontSize: "0.9rem", fontWeight: 600 }}>
             {pct}% complete

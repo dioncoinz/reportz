@@ -25,15 +25,18 @@ type UpdateRow = {
 
 const ISSUE_PREFIX = "__ISSUE__:";
 const NEXT_SHUT_PREFIX = "__NEXT_SHUT__:";
+const EMERGENT_PREFIX = "__EMERGENT__:";
 
 function getEntryKind(comment: string | null): "issue" | "update" {
   if (!comment) return "update";
+  if (comment.startsWith(EMERGENT_PREFIX)) return "issue";
   if (comment.startsWith(ISSUE_PREFIX)) return "issue";
   return "update";
 }
 
 function stripEntryPrefix(comment: string | null): string | null {
   if (!comment) return null;
+  if (comment.startsWith(EMERGENT_PREFIX)) return null;
   if (comment.startsWith(ISSUE_PREFIX)) return comment.slice(ISSUE_PREFIX.length).trim() || null;
   if (comment.startsWith(NEXT_SHUT_PREFIX)) return comment.slice(NEXT_SHUT_PREFIX.length).trim() || null;
   return comment;
@@ -271,7 +274,9 @@ export default function WorkOrderDetailPage() {
   }
 
   const generalUpdates = updates.filter((u) => getEntryKind(u.comment) === "update");
-  const issueEntries = updates.filter((u) => getEntryKind(u.comment) === "issue");
+  const issueEntries = updates.filter(
+    (u) => getEntryKind(u.comment) === "issue" && !(u.comment?.startsWith(EMERGENT_PREFIX))
+  );
   const existingPhotoCount = updates.reduce((n, u) => n + (u.photo_urls?.length ?? 0), 0);
   const remainingPhotoSlots = Math.max(maxPhotosPerWo - existingPhotoCount, 0);
 
@@ -384,13 +389,13 @@ export default function WorkOrderDetailPage() {
       </div>
 
       <div className="section-card grid" style={{ gap: "0.75rem" }}>
-        <h3>Comments</h3>
+        <h3>Completion Comments</h3>
 
         <textarea
           className="textarea"
           value={comment}
           onChange={(e) => setComment(e.target.value)}
-          placeholder="Write a comment..."
+          placeholder="Write completion comments..."
           rows={4}
         />
 
@@ -435,19 +440,19 @@ export default function WorkOrderDetailPage() {
             onClick={() => addEntry("update")}
             disabled={saving || (!comment.trim() && files.length === 0)}
           >
-            {saving ? "Saving..." : "Save comment"}
+            {saving ? "Saving..." : "Save completion comment"}
           </button>
           {msg ? <span className="muted">{msg}</span> : null}
         </div>
       </div>
 
       <div className="section-card grid" style={{ gap: "0.75rem" }}>
-        <h3>Issues</h3>
+        <h3>Issues/Recommendations</h3>
         <textarea
           className="textarea"
           value={issuesComment}
           onChange={(e) => setIssuesComment(e.target.value)}
-          placeholder="Describe issue found..."
+          placeholder="Describe issue or recommendation..."
           rows={3}
         />
         <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", alignItems: "center" }}>
@@ -487,13 +492,13 @@ export default function WorkOrderDetailPage() {
             onClick={() => addEntry("issue")}
             disabled={savingIssues || (!issuesComment.trim() && issuesFiles.length === 0)}
           >
-            {savingIssues ? "Saving..." : "Save issue"}
+            {savingIssues ? "Saving..." : "Save issue/recommendation"}
           </button>
         </div>
       </div>
 
       <div className="grid">
-        <h3>Comments</h3>
+        <h3>Completion Comments</h3>
 
         {generalUpdates.map((u) => (
           <div key={u.id} className="section-card" style={{ padding: "0.85rem" }}>
@@ -526,11 +531,11 @@ export default function WorkOrderDetailPage() {
           </div>
         ))}
 
-        {generalUpdates.length === 0 ? <p className="muted">No comments yet. Add the first one above.</p> : null}
+        {generalUpdates.length === 0 ? <p className="muted">No completion comments yet. Add the first one above.</p> : null}
       </div>
 
       <div className="grid">
-        <h3>Logged Issues</h3>
+        <h3>Logged Issues/Recommendations</h3>
         {issueEntries.map((u) => (
           <div key={u.id} className="section-card" style={{ padding: "0.85rem" }}>
             <div className="muted" style={{ fontSize: "0.78rem" }}>
@@ -559,7 +564,7 @@ export default function WorkOrderDetailPage() {
             ) : null}
           </div>
         ))}
-        {issueEntries.length === 0 ? <p className="muted">No issues logged yet.</p> : null}
+        {issueEntries.length === 0 ? <p className="muted">No issues/recommendations logged yet.</p> : null}
       </div>
 
     </div>
