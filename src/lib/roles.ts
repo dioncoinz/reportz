@@ -21,11 +21,12 @@ export function canExportPowerPoint(role: AppRole | null | undefined) {
 }
 
 export function canAccessUserAdmin(role: AppRole | null | undefined) {
-  return role === "manager" || role === "owner";
+  return role === "supervisor" || role === "manager" || role === "owner";
 }
 
 export function canAssignRole(actorRole: AppRole | null | undefined, targetRole: AppRole) {
   if (actorRole === "owner") return true;
   if (actorRole === "manager") return targetRole !== "owner";
+  if (actorRole === "supervisor") return targetRole === "contributor";
   return false;
 }

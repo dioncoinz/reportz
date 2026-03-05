@@ -32,7 +32,18 @@ export default function ImportPage() {
     if (!res.ok) {
       setMsg(json.error);
     } else {
-      setMsg(`Imported ${json.inserted} work orders`);
+      const inserted = Number(json.inserted ?? 0);
+      const skipped = Number(json.skipped ?? 0);
+      const refreshed = Number(json.refreshed ?? 0);
+      if (json.message) {
+        setMsg(String(json.message));
+      } else if (refreshed > 0) {
+        setMsg(`Imported ${inserted} work orders, refreshed ${refreshed} existing work orders.`);
+      } else if (skipped > 0) {
+        setMsg(`Imported ${inserted} work orders, skipped ${skipped} duplicates.`);
+      } else {
+        setMsg(`Imported ${inserted} work orders`);
+      }
     }
   }
 

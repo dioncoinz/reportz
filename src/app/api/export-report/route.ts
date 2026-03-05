@@ -11,6 +11,7 @@ type ReportRow = {
   name: string;
   start_date: string | null;
   end_date: string | null;
+  key_personnel: string | null;
   status: string;
 };
 
@@ -27,8 +28,8 @@ type WorkOrderRow = {
   wo_number: string;
   title: string | null;
   status: "open" | "complete" | "cancelled" | "archived";
+  emergent_work: boolean;
   cancelled_reason: string | null;
-  completed_at: string | null;
 };
 
 type UpdateRow = {
@@ -41,6 +42,7 @@ type UpdateRow = {
 
 const ISSUE_PREFIX = "__ISSUE__:";
 const NEXT_SHUT_PREFIX = "__NEXT_SHUT__:";
+const EMERGENT_PREFIX = "__EMERGENT__:";
 
 function safe(name: string) {
   return name.replace(/[<>:"/\\|?*]/g, "").slice(0, 80);
@@ -74,6 +76,56 @@ function asDataUri(buf: Buffer, mime: string) {
   return `data:${mime};base64,${buf.toString("base64")}`;
 }
 
+function jpegOrientation(buf: Buffer) {
+  if (buf.length < 4 || buf.readUInt16BE(0) !== 0xffd8) return 1;
+  let offset = 2;
+
+  while (offset + 4 <= buf.length) {
+    if (buf[offset] !== 0xff) break;
+    const marker = buf[offset + 1];
+    const size = buf.readUInt16BE(offset + 2);
+    if (size < 2 || offset + 2 + size > buf.length) break;
+
+    if (marker === 0xe1) {
+      const exifStart = offset + 4;
+      if (exifStart + 6 > buf.length) break;
+      if (buf.toString("ascii", exifStart, exifStart + 6) !== "Exif\0\0") break;
+
+      const tiff = exifStart + 6;
+      if (tiff + 8 > buf.length) break;
+
+      const little = buf.toString("ascii", tiff, tiff + 2) === "II";
+      const read16 = (p: number) => (little ? buf.readUInt16LE(p) : buf.readUInt16BE(p));
+      const read32 = (p: number) => (little ? buf.readUInt32LE(p) : buf.readUInt32BE(p));
+
+      const ifd0 = tiff + read32(tiff + 4);
+      if (ifd0 + 2 > buf.length) break;
+      const entries = read16(ifd0);
+      for (let i = 0; i < entries; i += 1) {
+        const entry = ifd0 + 2 + i * 12;
+        if (entry + 12 > buf.length) break;
+        if (read16(entry) === 0x0112) {
+          return read16(entry + 8);
+        }
+      }
+      break;
+    }
+
+    offset += 2 + size;
+  }
+
+  return 1;
+}
+
+function exifRotationDegrees(buf: Buffer, path: string) {
+  if (!path.toLowerCase().endsWith(".jpg") && !path.toLowerCase().endsWith(".jpeg")) return 0;
+  const orientation = jpegOrientation(buf);
+  if (orientation === 3) return 180;
+  if (orientation === 6) return 90;
+  if (orientation === 8) return 270;
+  return 0;
+}
+
 function statusColor(status: WorkOrderRow["status"]) {
   if (status === "complete") return "1B8F5A";
   if (status === "cancelled") return "B92C2C";
@@ -83,6 +135,7 @@ function statusColor(status: WorkOrderRow["status"]) {
 
 function getEntryKind(comment: string | null): "comments" | "issues" | "next" {
   if (!comment) return "comments";
+  if (comment.startsWith(EMERGENT_PREFIX)) return "next";
   if (comment.startsWith(ISSUE_PREFIX)) return "issues";
   if (comment.startsWith(NEXT_SHUT_PREFIX)) return "next";
   return "comments";
@@ -90,6 +143,7 @@ function getEntryKind(comment: string | null): "comments" | "issues" | "next" {
 
 function cleanComment(comment: string | null) {
   if (!comment) return "";
+  if (comment.startsWith(EMERGENT_PREFIX)) return "";
   if (comment.startsWith(ISSUE_PREFIX)) return comment.slice(ISSUE_PREFIX.length).trim();
   if (comment.startsWith(NEXT_SHUT_PREFIX)) return comment.slice(NEXT_SHUT_PREFIX.length).trim();
   return comment.trim();
@@ -102,16 +156,105 @@ function startMonthYear(dateStr: string | null) {
   return d.toLocaleString("en-US", { month: "long", year: "numeric" });
 }
 
+function getErrorMessage(err: unknown) {
+  if (err instanceof Error && err.message) return err.message;
+  if (typeof err === "string") return err;
+  if (err && typeof err === "object") {
+    const maybeMessage = (err as { message?: unknown }).message;
+    if (typeof maybeMessage === "string" && maybeMessage.trim().length > 0) return maybeMessage;
+  }
+  return "";
+}
+
+function isMissingColumnError(err: unknown, column: string) {
+  const msg = getErrorMessage(err).toLowerCase();
+  return msg.includes("column") && msg.includes(column.toLowerCase()) && msg.includes("does not exist");
+}
+
+async function fetchAllWorkOrders(
+  supabase: ReturnType<typeof createClient>,
+  reportId: string
+): Promise<{ rows: WorkOrderRow[]; error: string | null }> {
+  const pageSize = 1000;
+
+  async function fetchPage(withEmergent: boolean, from: number, to: number) {
+    const selectCols = withEmergent
+      ? "id, wo_number, title, status, emergent_work, cancelled_reason"
+      : "id, wo_number, title, status, cancelled_reason";
+    return supabase
+      .from("work_orders")
+      .select(selectCols)
+      .eq("report_id", reportId)
+      .order("wo_number")
+      .range(from, to);
+  }
+
+  let withEmergent = true;
+  let rows: WorkOrderRow[] = [];
+  let from = 0;
+
+  while (true) {
+    const to = from + pageSize - 1;
+    const page = await fetchPage(withEmergent, from, to);
+
+    if (page.error) {
+      if (withEmergent && isMissingColumnError(page.error, "emergent_work")) {
+        withEmergent = false;
+        rows = [];
+        from = 0;
+        continue;
+      }
+      return { rows: [], error: page.error.message };
+    }
+
+    const chunk = (page.data ?? []) as Array<Omit<WorkOrderRow, "emergent_work"> & { emergent_work?: boolean }>;
+    if (!chunk.length) break;
+
+    rows.push(
+      ...chunk.map((r) => ({
+        ...r,
+        emergent_work: withEmergent ? Boolean(r.emergent_work) : false,
+      }))
+    );
+
+    if (chunk.length < pageSize) break;
+    from += pageSize;
+  }
+
+  return { rows, error: null };
+}
+
 export async function GET(req: NextRequest) {
   const supabase = createClient(requireEnv("NEXT_PUBLIC_SUPABASE_URL"), requireEnv("SUPABASE_SERVICE_ROLE_KEY"));
   const id = req.nextUrl.searchParams.get("reportId");
   if (!id) return NextResponse.json({ error: "Missing reportId" }, { status: 400 });
 
-  const { data: report, error: reportErr } = await supabase
+  const reportSelectWithKeyPersonnel = await supabase
     .from("reports")
-    .select("id, tenant_id, name, start_date, end_date, status")
-    .eq("id", id)
-    .single<ReportRow>();
+    .select("id, tenant_id, name, start_date, end_date, key_personnel, status")
+    .eq("id", id);
+
+  let report: ReportRow | null = null;
+  let reportErr: { message: string } | null = null;
+
+  if (reportSelectWithKeyPersonnel.error) {
+    if (!isMissingColumnError(reportSelectWithKeyPersonnel.error, "key_personnel")) {
+      reportErr = { message: reportSelectWithKeyPersonnel.error.message };
+    } else {
+      const fallback = await supabase
+        .from("reports")
+        .select("id, tenant_id, name, start_date, end_date, status")
+        .eq("id", id)
+        .single<Omit<ReportRow, "key_personnel">>();
+      if (fallback.error || !fallback.data) {
+        reportErr = { message: fallback.error?.message ?? "Report not found" };
+      } else {
+        report = { ...fallback.data, key_personnel: null };
+      }
+    }
+  } else if (reportSelectWithKeyPersonnel.data?.length) {
+    report = reportSelectWithKeyPersonnel.data[0] as ReportRow;
+  }
 
   if (reportErr || !report) {
     return NextResponse.json({ error: reportErr?.message ?? "Report not found" }, { status: 404 });
@@ -123,14 +266,11 @@ export async function GET(req: NextRequest) {
     .eq("tenant_id", report.tenant_id)
     .maybeSingle<BrandingRow>();
 
-  const { data: wos } = await supabase
-    .from("work_orders")
-    .select("id, wo_number, title, status, cancelled_reason, completed_at")
-    .eq("report_id", id)
-    .order("wo_number")
-    .returns<WorkOrderRow[]>();
-
-  const woRows = wos ?? [];
+  const woFetch = await fetchAllWorkOrders(supabase, id);
+  if (woFetch.error) {
+    return NextResponse.json({ error: woFetch.error }, { status: 500 });
+  }
+  const woRows = woFetch.rows;
   const woIds = woRows.map((w) => w.id);
 
   const { data: updates } = woIds.length
@@ -147,11 +287,22 @@ export async function GET(req: NextRequest) {
     if (!updatesByWo.has(u.work_order_id)) updatesByWo.set(u.work_order_id, []);
     updatesByWo.get(u.work_order_id)?.push(u);
   }
+  const emergentByMarker = new Set<string>();
+  for (const u of updates ?? []) {
+    if (typeof u.comment === "string" && u.comment.startsWith(EMERGENT_PREFIX)) {
+      emergentByMarker.add(u.work_order_id);
+    }
+  }
+  const woRowsWithEmergent = woRows.map((w) => ({
+    ...w,
+    emergent_work: w.emergent_work || emergentByMarker.has(w.id),
+  }));
 
-  const total = woRows.length;
-  const complete = woRows.filter((w) => w.status === "complete").length;
-  const cancelled = woRows.filter((w) => w.status === "cancelled").length;
-  const open = woRows.filter((w) => w.status === "open").length;
+  const total = woRowsWithEmergent.length;
+  const complete = woRowsWithEmergent.filter((w) => w.status === "complete").length;
+  const cancelled = woRowsWithEmergent.filter((w) => w.status === "cancelled").length;
+  const open = woRowsWithEmergent.filter((w) => w.status === "open").length;
+  const emergent = woRowsWithEmergent.filter((w) => w.emergent_work).length;
 
   const accent = normalizeHex(branding?.accent_hex, "C7662D");
   const company = branding?.company_name ?? "Reportz";
@@ -211,7 +362,8 @@ export async function GET(req: NextRequest) {
       x: 0.6,
       y: 4.35,
       w: 6.9,
-      h: 1.15,      fill: { color: "FFFFFF" },
+      h: 1.15,
+      fill: { color: "FFFFFF" },
       line: { color: "D8DEEA", pt: 1 },
     });
     slide.addText(`${startMonthYear(report.start_date)}`, {
@@ -223,6 +375,35 @@ export async function GET(req: NextRequest) {
       fontSize: 15,
       color: "334155",
       bold: true,
+    });
+    slide.addShape(pptx.ShapeType.roundRect, {
+      x: 8.1,
+      y: 4.35,
+      w: 4.65,
+      h: 1.65,
+      fill: { color: "FFFFFF" },
+      line: { color: "D8DEEA", pt: 1 },
+    });
+    slide.addText("Key Personnel", {
+      x: 8.35,
+      y: 4.52,
+      w: 4.15,
+      h: 0.24,
+      fontFace: "Aptos",
+      fontSize: 12,
+      bold: true,
+      color: "0F172A",
+    });
+    slide.addText(report.key_personnel?.trim() || "Not provided", {
+      x: 8.35,
+      y: 4.82,
+      w: 4.15,
+      h: 1.05,
+      fontFace: "Aptos",
+      fontSize: 10,
+      color: "334155",
+      breakLine: true,
+      valign: "top",
     });
     slide.addText(branding?.footer_text ?? "Generated by Reportz", {
       x: 0.6,
@@ -251,38 +432,42 @@ export async function GET(req: NextRequest) {
       color: "0F172A",
     });
 
+    const emergentColor = "0F6CBD";
+
     const kpi = [
       { label: "Total", val: total, bg: "F8FAFF", color: "0F172A" },
       { label: "Completed", val: complete, bg: "EAF8F0", color: "1B8F5A" },
       { label: "Open", val: open, bg: "FFF7E4", color: "B67710" },
       { label: "Cancelled", val: cancelled, bg: "FCEDEE", color: "B92C2C" },
+      { label: "Emergent", val: emergent, bg: "EAF4FF", color: emergentColor },
     ];
 
     kpi.forEach((k, i) => {
-      const x = 0.6 + i * 3.1;
+      const x = 0.6 + i * 2.45;
       slide.addShape(pptx.ShapeType.roundRect, {
         x,
         y: 1.1,
-        w: 2.85,
+        w: 2.25,
         h: 1.25,        fill: { color: k.bg },
         line: { color: "D8DEEA", pt: 1 },
       });
-      slide.addText(k.label, { x: x + 0.2, y: 1.3, w: 2.4, h: 0.25, fontFace: "Aptos", fontSize: 11, color: "5F6F88", bold: true });
-      slide.addText(String(k.val), { x: x + 0.2, y: 1.58, w: 2.4, h: 0.55, fontFace: "Aptos", fontSize: 28, color: k.color, bold: true });
+      slide.addText(k.label, { x: x + 0.18, y: 1.3, w: 1.92, h: 0.25, fontFace: "Aptos", fontSize: 11, color: "5F6F88", bold: true });
+      slide.addText(String(k.val), { x: x + 0.18, y: 1.58, w: 1.92, h: 0.55, fontFace: "Aptos", fontSize: 24, color: k.color, bold: true });
     });
 
     // Status composition bar
-    const mix = [
+    const statusMix = [
       { label: "Completed", value: complete, color: "1B8F5A" },
       { label: "Open", value: open, color: "B67710" },
       { label: "Cancelled", value: cancelled, color: "B92C2C" },
+      { label: "Emergent", value: emergent, color: emergentColor },
     ];
-    const mixTotal = Math.max(total, 1);
+    const mixTotal = Math.max(statusMix.reduce((sum, m) => sum + m.value, 0), 1);
     let cursor = 0.6;
     const width = 12.1;
 
     slide.addText("Status Mix", { x: 0.6, y: 2.75, w: 3, h: 0.3, fontFace: "Aptos", fontSize: 14, bold: true, color: "334155" });
-    mix.forEach((m) => {
+    statusMix.forEach((m) => {
       const w = Math.max((m.value / mixTotal) * width, m.value > 0 ? 0.08 : 0);
       slide.addShape(pptx.ShapeType.rect, {
         x: cursor,
@@ -296,7 +481,7 @@ export async function GET(req: NextRequest) {
     });
 
     let legendY = 3.55;
-    mix.forEach((m) => {
+    statusMix.forEach((m) => {
       slide.addShape(pptx.ShapeType.rect, { x: 0.6, y: legendY + 0.05, w: 0.14, h: 0.14, fill: { color: m.color }, line: { color: m.color, pt: 0 } });
       slide.addText(`${m.label}: ${m.value} (${pct(m.value, mixTotal)}%)`, {
         x: 0.8,
@@ -312,7 +497,6 @@ export async function GET(req: NextRequest) {
 
     // Schedule compliance (completed vs total)
     const compliancePct = pct(complete, Math.max(total, 1));
-    const remaining = Math.max(total - complete, 0);
 
     slide.addText("Schedule Compliance", {
       x: 5.3,
@@ -337,7 +521,7 @@ export async function GET(req: NextRequest) {
     slide.addChart(
       pptx.ChartType.doughnut,
       [
-        { name: "Compliance", labels: ["Completed", "Remaining"], values: [complete, remaining] },
+        { name: "Status", labels: ["Completed", "Open", "Cancelled", "Emergent"], values: [complete, open, cancelled, emergent] },
       ],
       {
         x: 5.5,
@@ -346,7 +530,7 @@ export async function GET(req: NextRequest) {
         h: 2.5,
         showLegend: false,
         holeSize: 68,
-        chartColors: ["1B8F5A", "E2E8F0"],
+        chartColors: ["1B8F5A", "B67710", "B92C2C", emergentColor],
         showValue: false,
       }
     );
@@ -386,7 +570,7 @@ export async function GET(req: NextRequest) {
   }
 
   // Work order detail slides
-  for (const w of woRows) {
+  for (const w of woRowsWithEmergent) {
     const slide = pptx.addSlide();
     slide.background = { color: "FFFFFF" };
     slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 13.333, h: 0.2, fill: { color: accent }, line: { color: accent } });
@@ -420,19 +604,39 @@ export async function GET(req: NextRequest) {
       bold: true,
       color: sColor,
     });
+    if (w.emergent_work) {
+      slide.addShape(pptx.ShapeType.roundRect, {
+        x: 3.1,
+        y: 1.25,
+        w: 1.75,
+        h: 0.46,
+        fill: { color: "EEF6FF" },
+        line: { color: "0F6CBD", pt: 1 },
+      });
+      slide.addText("EMERGENT", {
+        x: 3.3,
+        y: 1.39,
+        w: 1.35,
+        h: 0.2,
+        fontFace: "Aptos",
+        fontSize: 10,
+        bold: true,
+        color: "0F6CBD",
+      });
+    }
 
     const list = updatesByWo.get(w.id) ?? [];
     const statusMeta =
       w.status === "cancelled"
         ? `Reason: ${w.cancelled_reason ?? "Not provided"}`
         : w.status === "complete"
-        ? `Completed at: ${w.completed_at ? new Date(w.completed_at).toLocaleString() : "N/A"}`
+        ? "Completed"
         : "In progress";
 
     slide.addText(statusMeta, {
-      x: 3.2,
-      y: 1.36,
-      w: 6.8,
+      x: 0.6,
+      y: 1.78,
+      w: 7.35,
       h: 0.22,
       fontFace: "Aptos",
       fontSize: 11,
@@ -443,9 +647,13 @@ export async function GET(req: NextRequest) {
     const issues = list.filter((u) => getEntryKind(u.comment) === "issues");
     const allPhotoPaths = list.flatMap((u) => u.photo_urls ?? []).slice(0, 6);
 
+    const leftTop = 2.05;
+    const leftBottom = 7.35;
+    const leftGap = 0.3;
+    const leftSectionHeight = (leftBottom - leftTop - leftGap) / 2;
     const sections = [
-      { title: "Comments", rows: comments, y: 2.05 },
-      { title: "Issues", rows: issues, y: 3.9 },
+      { title: "Completion Comments", rows: comments, y: leftTop, h: leftSectionHeight },
+      { title: "Issues/Recommendations", rows: issues, y: leftTop + leftSectionHeight + leftGap, h: leftSectionHeight },
     ] as const;
 
     for (const section of sections) {
@@ -455,7 +663,7 @@ export async function GET(req: NextRequest) {
         x: 0.6,
         y: section.y,
         w: 7.35,
-        h: 1.6,
+        h: section.h,
         fill: { color: "F8FAFF" },
         line: { color: "D8DEEA", pt: 1 },
       });
@@ -475,7 +683,7 @@ export async function GET(req: NextRequest) {
         x: 0.82,
         y: section.y + 0.42,
         w: 6.95,
-        h: 1.04,
+        h: Math.max(section.h - 0.55, 0.7),
         fontFace: "Aptos",
         fontSize: 11,
         color: "334155",
@@ -499,14 +707,15 @@ export async function GET(req: NextRequest) {
       line: { color: "D8DEEA", pt: 1 },
     });
     slide.addText("Photos", {
-      x: galleryX + 0.23,
+      x: galleryX,
       y: galleryY + 0.11,
-      w: 4.1,
+      w: galleryW,
       h: 0.24,
       fontFace: "Aptos",
       fontSize: 12,
       bold: true,
       color: "0F172A",
+      align: "center",
     });
 
     if (!allPhotoPaths.length) {
@@ -529,12 +738,18 @@ export async function GET(req: NextRequest) {
       if (!pbuf) continue;
 
       const photoData = asDataUri(pbuf, imageMimeFromPath(path));
+      const rotate = exifRotationDegrees(pbuf, path);
       const col = i % 2;
       const row = Math.floor(i / 2);
-      const x = galleryX + 0.23 + col * 2.1;
-      const y = galleryContentY + 0.08 + row * 1.56;
-      const w = 1.98;
-      const h = 1.44;
+      const frameX = galleryX + 0.23 + col * 2.1;
+      const frameY = galleryContentY + 0.08 + row * 1.56;
+      const frameW = 1.98;
+      const frameH = 1.44;
+      const quarterTurn = rotate === 90 || rotate === 270;
+      const w = quarterTurn ? frameH : frameW;
+      const h = quarterTurn ? frameW : frameH;
+      const x = frameX + (frameW - w) / 2;
+      const y = frameY + (frameH - h) / 2;
 
       slide.addImage({
         data: photoData,
@@ -543,6 +758,7 @@ export async function GET(req: NextRequest) {
         w,
         h,
         sizing: { type: "contain", w, h },
+        rotate,
       });
     }
   }

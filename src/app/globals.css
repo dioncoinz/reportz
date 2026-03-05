@@ -176,6 +176,10 @@ h3 {
   color: #64748b;
 }
 
+.status-emergent {
+  color: var(--accent);
+}
+
 .grid {
   display: grid;
   gap: 0.85rem;
@@ -300,6 +304,7 @@ h3 {
   border-radius: 10px;
   border: 1px solid var(--border);
   object-fit: cover;
+  image-orientation: from-image;
   background: var(--surface-soft);
 }
 
