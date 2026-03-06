@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { requireEnv } from "@/lib/env";
 
 type WorkOrderRow = {
@@ -47,7 +48,7 @@ function sortEmergentLast<T extends { emergent_work: boolean; display_order?: nu
   });
 }
 
-async function fetchWorkOrdersSorted(adminClient: ReturnType<typeof createClient>, reportId: string) {
+async function fetchWorkOrdersSorted(adminClient: SupabaseClient, reportId: string) {
   const withDisplayOrder = await adminClient
     .from("work_orders")
     .select("id, wo_number, title, status, emergent_work, cancelled_reason, completed_at, created_at, display_order")
