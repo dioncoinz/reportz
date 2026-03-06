@@ -921,7 +921,6 @@ export async function GET(req: NextRequest) {
       h: 6.0,
       fill: { color: "F8FAFF" },
       line: { color: "D8DEEA", pt: 1 },
-      radius: 0.12,
     });
 
     slide.addText("Enter additional feedback here...", {
