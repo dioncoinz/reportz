@@ -11,6 +11,7 @@ type WorkOrderRow = {
   cancelled_reason: string | null;
   completed_at: string | null;
   created_at: string;
+  display_order?: number | null;
 };
 const EMERGENT_PREFIX = "__EMERGENT__:";
 
@@ -32,6 +33,39 @@ function getErrorMessage(err: unknown) {
 function isMissingColumnError(err: unknown, column: string) {
   const msg = getErrorMessage(err).toLowerCase();
   return msg.includes("column") && msg.includes(column.toLowerCase()) && msg.includes("does not exist");
+}
+
+function sortEmergentLast<T extends { emergent_work: boolean; display_order?: number | null; created_at?: string | null }>(
+  rows: T[]
+) {
+  return [...rows].sort((a, b) => {
+    if (a.emergent_work !== b.emergent_work) return a.emergent_work ? 1 : -1;
+    const ao = a.display_order ?? Number.MAX_SAFE_INTEGER;
+    const bo = b.display_order ?? Number.MAX_SAFE_INTEGER;
+    if (ao !== bo) return ao - bo;
+    return (a.created_at ?? "").localeCompare(b.created_at ?? "");
+  });
+}
+
+async function fetchWorkOrdersSorted(adminClient: ReturnType<typeof createClient>, reportId: string) {
+  const withDisplayOrder = await adminClient
+    .from("work_orders")
+    .select("id, wo_number, title, status, emergent_work, cancelled_reason, completed_at, created_at, display_order")
+    .eq("report_id", reportId)
+    .order("display_order", { ascending: true, nullsFirst: false })
+    .order("created_at", { ascending: true })
+    .returns<WorkOrderRow[]>();
+
+  if (withDisplayOrder.error && isMissingColumnError(withDisplayOrder.error, "display_order")) {
+    return adminClient
+      .from("work_orders")
+      .select("id, wo_number, title, status, emergent_work, cancelled_reason, completed_at, created_at")
+      .eq("report_id", reportId)
+      .order("created_at", { ascending: true })
+      .returns<Array<Omit<WorkOrderRow, "display_order">>>();
+  }
+
+  return withDisplayOrder;
 }
 
 export async function GET(req: NextRequest) {
@@ -78,12 +112,7 @@ export async function GET(req: NextRequest) {
   if (reportErr) return NextResponse.json({ error: reportErr.message }, { status: 500 });
   if (!report) return NextResponse.json({ error: "Report not found." }, { status: 404 });
 
-  const { data: workOrders, error: woErr } = await adminClient
-    .from("work_orders")
-    .select("id, wo_number, title, status, emergent_work, cancelled_reason, completed_at, created_at")
-    .eq("report_id", reportId)
-    .order("wo_number", { ascending: true })
-    .returns<WorkOrderRow[]>();
+  const { data: workOrders, error: woErr } = await fetchWorkOrdersSorted(adminClient, reportId);
 
   if (woErr) {
     if (!isMissingColumnError(woErr, "emergent_work")) {
@@ -94,7 +123,7 @@ export async function GET(req: NextRequest) {
       .from("work_orders")
       .select("id, wo_number, title, status, cancelled_reason, completed_at, created_at")
       .eq("report_id", reportId)
-      .order("wo_number", { ascending: true })
+      .order("created_at", { ascending: true })
       .returns<Array<Omit<WorkOrderRow, "emergent_work">>>();
 
     if (fallback.error) return NextResponse.json({ error: fallback.error.message }, { status: 500 });
@@ -112,9 +141,8 @@ export async function GET(req: NextRequest) {
         .filter((u) => typeof u.comment === "string" && u.comment.startsWith(EMERGENT_PREFIX))
         .map((u) => String(u.work_order_id))
     );
-    return NextResponse.json({
-      workOrders: mapped.map((w) => ({ ...w, emergent_work: w.emergent_work || emergentIds.has(w.id) })),
-    });
+    const withEmergent = mapped.map((w) => ({ ...w, emergent_work: w.emergent_work || emergentIds.has(w.id) }));
+    return NextResponse.json({ workOrders: sortEmergentLast(withEmergent) });
   }
 
   const rows = workOrders ?? [];
@@ -130,7 +158,6 @@ export async function GET(req: NextRequest) {
       .filter((u) => typeof u.comment === "string" && u.comment.startsWith(EMERGENT_PREFIX))
       .map((u) => String(u.work_order_id))
   );
-  return NextResponse.json({
-    workOrders: rows.map((w) => ({ ...w, emergent_work: w.emergent_work || emergentIds.has(w.id) })),
-  });
+  const withEmergent = rows.map((w) => ({ ...w, emergent_work: w.emergent_work || emergentIds.has(w.id) }));
+  return NextResponse.json({ workOrders: sortEmergentLast(withEmergent) });
 }

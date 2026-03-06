@@ -53,11 +53,17 @@ export async function POST(req: NextRequest) {
     if (!reportRow) return NextResponse.json({ error: "Report not found" }, { status: 404 });
 
     let supportsTenantIdOnWorkOrders = true;
+    let supportsDisplayOrderOnWorkOrders = true;
     {
       const probe = await supabase.from("work_orders").select("tenant_id").limit(1);
       if (probe.error) {
         if (isMissingColumnError(probe.error, "tenant_id")) supportsTenantIdOnWorkOrders = false;
         else throw probe.error;
+      }
+      const displayOrderProbe = await supabase.from("work_orders").select("display_order").limit(1);
+      if (displayOrderProbe.error) {
+        if (isMissingColumnError(displayOrderProbe.error, "display_order")) supportsDisplayOrderOnWorkOrders = false;
+        else throw displayOrderProbe.error;
       }
     }
 
@@ -69,7 +75,13 @@ export async function POST(req: NextRequest) {
     const worksheet = workbook.worksheets[0];
     if (!worksheet) throw new Error("No worksheet found");
 
-    type ImportRow = { report_id: string; wo_number: string; title: string; tenant_id?: string | null };
+    type ImportRow = {
+      report_id: string;
+      wo_number: string;
+      title: string;
+      tenant_id?: string | null;
+      display_order?: number;
+    };
     const parsedRows: ImportRow[] = [];
 
     worksheet.eachRow((row, rowNumber) => {
@@ -95,9 +107,21 @@ export async function POST(req: NextRequest) {
 
     const dedupedByWo = new Map<string, ImportRow>();
     for (const row of parsedRows) {
-      dedupedByWo.set(row.wo_number, row);
+      if (!dedupedByWo.has(row.wo_number)) dedupedByWo.set(row.wo_number, row);
     }
-    const rows = Array.from(dedupedByWo.values());
+    let rows = Array.from(dedupedByWo.values());
+
+    if (supportsDisplayOrderOnWorkOrders) {
+      const { data: maxOrderRows, error: maxOrderErr } = await supabase
+        .from("work_orders")
+        .select("display_order")
+        .eq("report_id", reportId)
+        .order("display_order", { ascending: false })
+        .limit(1);
+      if (maxOrderErr) throw maxOrderErr;
+      const currentMax = Number(maxOrderRows?.[0]?.display_order ?? 0);
+      rows = rows.map((row, idx) => ({ ...row, display_order: currentMax + idx + 1 }));
+    }
 
     const woNumbers = rows.map((r) => r.wo_number);
     const { data: existing, error: existingErr } = await supabase

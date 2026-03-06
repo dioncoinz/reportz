@@ -12,6 +12,8 @@ type ReportRow = {
   name: string;
   start_date: string | null;
   end_date: string | null;
+  safety_injuries: number | null;
+  safety_incidents: number | null;
   status: string;
   created_at: string;
 };
@@ -29,6 +31,19 @@ function displayReportName(name: string) {
   return name.startsWith(ARCHIVE_PREFIX) ? name.slice(ARCHIVE_PREFIX.length).trim() : name;
 }
 
+function getErrorMessage(err: unknown) {
+  if (err && typeof err === "object" && "message" in err) {
+    const msg = (err as { message?: unknown }).message;
+    if (typeof msg === "string") return msg;
+  }
+  return "";
+}
+
+function isMissingColumnError(err: unknown, column: string) {
+  const msg = getErrorMessage(err).toLowerCase();
+  return msg.includes("column") && msg.includes(column.toLowerCase()) && msg.includes("does not exist");
+}
+
 export default function ReportDetailPage() {
   const supabase = createSupabaseBrowser();
   const { profile } = useProfile();
@@ -42,6 +57,10 @@ export default function ReportDetailPage() {
   const [archiving, setArchiving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [woProgress, setWoProgress] = useState<WorkOrderStatusRow[]>([]);
+  const [safetyInjuries, setSafetyInjuries] = useState("0");
+  const [safetyIncidents, setSafetyIncidents] = useState("0");
+  const [savingSafety, setSavingSafety] = useState(false);
+  const [safetyMsg, setSafetyMsg] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
@@ -50,11 +69,35 @@ export default function ReportDetailPage() {
       setLoading(true);
       setErr(null);
 
-      const { data, error } = await supabase
+      const reportWithSafety = await supabase
         .from("reports")
-        .select("id, name, start_date, end_date, status, created_at")
+        .select("id, name, start_date, end_date, safety_injuries, safety_incidents, status, created_at")
         .eq("id", reportId)
         .single();
+      let data: ReportRow | null = null;
+      let error: { message: string } | null = null;
+
+      if (reportWithSafety.error) {
+        if (
+          isMissingColumnError(reportWithSafety.error, "safety_injuries") ||
+          isMissingColumnError(reportWithSafety.error, "safety_incidents")
+        ) {
+          const fallback = await supabase
+            .from("reports")
+            .select("id, name, start_date, end_date, status, created_at")
+            .eq("id", reportId)
+            .single<Omit<ReportRow, "safety_injuries" | "safety_incidents">>();
+          if (fallback.error || !fallback.data) {
+            error = { message: fallback.error?.message ?? "Report not found" };
+          } else {
+            data = { ...fallback.data, safety_injuries: 0, safety_incidents: 0 };
+          }
+        } else {
+          error = { message: reportWithSafety.error.message };
+        }
+      } else if (reportWithSafety.data) {
+        data = reportWithSafety.data as ReportRow;
+      }
       const { data: sessionRes, error: sessionErr } = await supabase.auth.getSession();
       const token = sessionRes.session?.access_token;
       let woData: WorkOrderStatusRow[] = [];
@@ -69,11 +112,14 @@ export default function ReportDetailPage() {
         }
       }
 
-      if (error) {
-        setErr(error.message);
+      if (error || !data) {
+        setErr(error?.message ?? "Report not found.");
         setReport(null);
       } else {
-        setReport(data as ReportRow);
+        const typed = data as ReportRow;
+        setReport(typed);
+        setSafetyInjuries(String(Math.max(typed.safety_injuries ?? 0, 0)));
+        setSafetyIncidents(String(Math.max(typed.safety_incidents ?? 0, 0)));
         setWoProgress(woData);
       }
 
@@ -154,6 +200,32 @@ export default function ReportDetailPage() {
     }
 
     router.push("/reports");
+  }
+
+  async function saveSafetyCompliance() {
+    if (!report) return;
+    setSavingSafety(true);
+    setSafetyMsg(null);
+
+    const injuries = Math.max(Number.parseInt(safetyInjuries || "0", 10) || 0, 0);
+    const incidents = Math.max(Number.parseInt(safetyIncidents || "0", 10) || 0, 0);
+
+    const { error } = await supabase
+      .from("reports")
+      .update({
+        safety_injuries: injuries,
+        safety_incidents: incidents,
+      })
+      .eq("id", report.id);
+
+    setSavingSafety(false);
+    if (error) {
+      setSafetyMsg(`Save failed: ${error.message}`);
+      return;
+    }
+
+    setReport({ ...report, safety_injuries: injuries, safety_incidents: incidents });
+    setSafetyMsg("Safety compliance saved");
   }
 
   if (!reportId) return <p className="muted">Missing report id.</p>;
@@ -270,6 +342,37 @@ export default function ReportDetailPage() {
       </div>
 
       <div className="section-card muted">Track imports, updates, and exports for this shutdown report.</div>
+      <div className="section-card grid" style={{ gap: "0.65rem" }}>
+        <h3>Safety Compliance</h3>
+        <div style={{ display: "grid", gap: "0.6rem", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
+          <label className="field">
+            <span className="label">Injuries</span>
+            <input
+              className="input"
+              type="number"
+              min={0}
+              value={safetyInjuries}
+              onChange={(e) => setSafetyInjuries(e.target.value)}
+            />
+          </label>
+          <label className="field">
+            <span className="label">Incidents</span>
+            <input
+              className="input"
+              type="number"
+              min={0}
+              value={safetyIncidents}
+              onChange={(e) => setSafetyIncidents(e.target.value)}
+            />
+          </label>
+        </div>
+        <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
+          <button className="btn btn-primary" onClick={saveSafetyCompliance} disabled={savingSafety}>
+            {savingSafety ? "Saving..." : "Save safety compliance"}
+          </button>
+          {safetyMsg ? <span className={safetyMsg.toLowerCase().includes("failed") ? "error-text" : "muted"}>{safetyMsg}</span> : null}
+        </div>
+      </div>
     </div>
   );
 }

@@ -13,6 +13,8 @@ type ReportRow = {
   start_date: string | null;
   end_date: string | null;
   key_personnel: string | null;
+  safety_injuries: number | null;
+  safety_incidents: number | null;
   status: string;
 };
 
@@ -31,6 +33,8 @@ type WorkOrderRow = {
   status: "open" | "complete" | "cancelled" | "archived";
   emergent_work: boolean;
   cancelled_reason: string | null;
+  display_order?: number | null;
+  created_at?: string | null;
 };
 
 type UpdateRow = {
@@ -150,6 +154,17 @@ function cleanComment(comment: string | null) {
   return comment.trim();
 }
 
+function toBulletLines(raw: string) {
+  const lines = raw
+    .split(/\r?\n/)
+    .map((l) => l.trim())
+    .filter(Boolean)
+    .map((l) => l.replace(/^[\-\*\u2022]\s*/, "").trim())
+    .filter(Boolean);
+  if (!lines.length) return ["No comment"];
+  return lines;
+}
+
 function startMonthYear(dateStr: string | null) {
   if (!dateStr) return "N/A";
   const d = new Date(dateStr);
@@ -172,6 +187,18 @@ function isMissingColumnError(err: unknown, column: string) {
   return msg.includes("column") && msg.includes(column.toLowerCase()) && msg.includes("does not exist");
 }
 
+function sortEmergentLast<T extends { emergent_work: boolean; display_order?: number | null; created_at?: string | null }>(
+  rows: T[]
+) {
+  return [...rows].sort((a, b) => {
+    if (a.emergent_work !== b.emergent_work) return a.emergent_work ? 1 : -1;
+    const ao = a.display_order ?? Number.MAX_SAFE_INTEGER;
+    const bo = b.display_order ?? Number.MAX_SAFE_INTEGER;
+    if (ao !== bo) return ao - bo;
+    return (a.created_at ?? "").localeCompare(b.created_at ?? "");
+  });
+}
+
 async function fetchAllWorkOrders(
   supabase: SupabaseClient,
   reportId: string
@@ -180,13 +207,23 @@ async function fetchAllWorkOrders(
 
   async function fetchPage(withEmergent: boolean, from: number, to: number) {
     const selectCols = withEmergent
-      ? "id, wo_number, title, status, emergent_work, cancelled_reason"
-      : "id, wo_number, title, status, cancelled_reason";
-    return supabase
+      ? "id, wo_number, title, status, emergent_work, cancelled_reason, display_order, created_at"
+      : "id, wo_number, title, status, cancelled_reason, display_order, created_at";
+    const page = await supabase
       .from("work_orders")
       .select(selectCols)
       .eq("report_id", reportId)
-      .order("wo_number")
+      .order("display_order", { ascending: true, nullsFirst: false })
+      .order("created_at", { ascending: true })
+      .range(from, to);
+    if (!page.error || !isMissingColumnError(page.error, "display_order")) return page;
+    return supabase
+      .from("work_orders")
+      .select(withEmergent
+        ? "id, wo_number, title, status, emergent_work, cancelled_reason, created_at"
+        : "id, wo_number, title, status, cancelled_reason, created_at")
+      .eq("report_id", reportId)
+      .order("created_at", { ascending: true })
       .range(from, to);
   }
 
@@ -232,25 +269,29 @@ export async function GET(req: NextRequest) {
 
   const reportSelectWithKeyPersonnel = await supabase
     .from("reports")
-    .select("id, tenant_id, name, start_date, end_date, key_personnel, status")
+    .select("id, tenant_id, name, start_date, end_date, key_personnel, safety_injuries, safety_incidents, status")
     .eq("id", id);
 
   let report: ReportRow | null = null;
   let reportErr: { message: string } | null = null;
 
   if (reportSelectWithKeyPersonnel.error) {
-    if (!isMissingColumnError(reportSelectWithKeyPersonnel.error, "key_personnel")) {
+    const isFallbackNeeded =
+      isMissingColumnError(reportSelectWithKeyPersonnel.error, "key_personnel") ||
+      isMissingColumnError(reportSelectWithKeyPersonnel.error, "safety_injuries") ||
+      isMissingColumnError(reportSelectWithKeyPersonnel.error, "safety_incidents");
+    if (!isFallbackNeeded) {
       reportErr = { message: reportSelectWithKeyPersonnel.error.message };
     } else {
       const fallback = await supabase
         .from("reports")
         .select("id, tenant_id, name, start_date, end_date, status")
         .eq("id", id)
-        .single<Omit<ReportRow, "key_personnel">>();
+        .single<Omit<ReportRow, "key_personnel" | "safety_injuries" | "safety_incidents">>();
       if (fallback.error || !fallback.data) {
         reportErr = { message: fallback.error?.message ?? "Report not found" };
       } else {
-        report = { ...fallback.data, key_personnel: null };
+        report = { ...fallback.data, key_personnel: null, safety_injuries: 0, safety_incidents: 0 };
       }
     }
   } else if (reportSelectWithKeyPersonnel.data?.length) {
@@ -298,12 +339,15 @@ export async function GET(req: NextRequest) {
     ...w,
     emergent_work: w.emergent_work || emergentByMarker.has(w.id),
   }));
+  const orderedWoRows = sortEmergentLast(woRowsWithEmergent);
 
-  const total = woRowsWithEmergent.length;
-  const complete = woRowsWithEmergent.filter((w) => w.status === "complete").length;
-  const cancelled = woRowsWithEmergent.filter((w) => w.status === "cancelled").length;
-  const open = woRowsWithEmergent.filter((w) => w.status === "open").length;
-  const emergent = woRowsWithEmergent.filter((w) => w.emergent_work).length;
+  const total = orderedWoRows.length;
+  const complete = orderedWoRows.filter((w) => w.status === "complete").length;
+  const cancelled = orderedWoRows.filter((w) => w.status === "cancelled").length;
+  const open = orderedWoRows.filter((w) => w.status === "open").length;
+  const emergent = orderedWoRows.filter((w) => w.emergent_work).length;
+  const safetyInjuries = Math.max(report.safety_injuries ?? 0, 0);
+  const safetyIncidents = Math.max(report.safety_incidents ?? 0, 0);
 
   const accent = normalizeHex(branding?.accent_hex, "C7662D");
   const company = branding?.company_name ?? "Reportz";
@@ -499,22 +543,29 @@ export async function GET(req: NextRequest) {
     // Schedule compliance (completed vs total)
     const compliancePct = pct(complete, Math.max(total, 1));
 
+    const complianceX = 3.95;
+    const safetyX = 8.25;
+    const panelY = 3.9;
+    const panelW = 4.1;
+    const panelH = 3.35;
+
     slide.addText("Schedule Compliance", {
-      x: 5.3,
+      x: complianceX,
       y: 3.55,
-      w: 4.8,
+      w: panelW,
       h: 0.3,
       fontFace: "Aptos",
       fontSize: 14,
       bold: true,
       color: "334155",
+      align: "center",
     });
 
     slide.addShape(pptx.ShapeType.roundRect, {
-      x: 5.25,
-      y: 3.9,
-      w: 7.1,
-      h: 3.05,
+      x: complianceX,
+      y: panelY,
+      w: panelW,
+      h: panelH,
       fill: { color: "F8FAFF" },
       line: { color: "D8DEEA", pt: 1 },
     });
@@ -525,10 +576,10 @@ export async function GET(req: NextRequest) {
         { name: "Status", labels: ["Completed", "Open", "Cancelled", "Emergent"], values: [complete, open, cancelled, emergent] },
       ],
       {
-        x: 5.5,
-        y: 4.15,
-        w: 3.4,
-        h: 2.5,
+        x: complianceX + 0.18,
+        y: 4.1,
+        w: 1.95,
+        h: 2.45,
         showLegend: false,
         holeSize: 68,
         chartColors: ["1B8F5A", "B67710", "B92C2C", emergentColor],
@@ -537,33 +588,91 @@ export async function GET(req: NextRequest) {
     );
 
     slide.addText(`${compliancePct}%`, {
-      x: 8.95,
-      y: 4.45,
-      w: 2.9,
-      h: 0.62,
+      x: complianceX + 2.18,
+      y: 4.5,
+      w: 1.42,
+      h: 0.52,
       fontFace: "Aptos",
-      fontSize: 40,
+      fontSize: 30,
       bold: true,
       color: "1B8F5A",
       align: "center",
     });
     slide.addText("On-schedule completion", {
-      x: 8.95,
-      y: 5.08,
-      w: 2.9,
+      x: complianceX + 2.12,
+      y: 5.12,
+      w: 1.5,
       h: 0.28,
       fontFace: "Aptos",
-      fontSize: 10,
+      fontSize: 8,
       color: "64748B",
       align: "center",
     });
     slide.addText(`${complete} completed of ${total} total`, {
-      x: 8.95,
-      y: 5.42,
-      w: 2.9,
+      x: complianceX + 2.12,
+      y: 5.45,
+      w: 1.5,
       h: 0.25,
       fontFace: "Aptos",
-      fontSize: 11,
+      fontSize: 9,
+      color: "334155",
+      bold: true,
+      align: "center",
+    });
+
+    slide.addText("Safety Compliance", {
+      x: safetyX,
+      y: 3.55,
+      w: panelW,
+      h: 0.3,
+      fontFace: "Aptos",
+      fontSize: 14,
+      bold: true,
+      color: "334155",
+      align: "center",
+    });
+
+    slide.addShape(pptx.ShapeType.roundRect, {
+      x: safetyX,
+      y: panelY,
+      w: panelW,
+      h: panelH,
+      fill: { color: "F8FAFF" },
+      line: { color: "D8DEEA", pt: 1 },
+    });
+
+    const safetyTextW = 2.95;
+    const safetyTextX = safetyX + (panelW - safetyTextW) / 2;
+
+    slide.addText(`Injuries: ${safetyInjuries}`, {
+      x: safetyTextX,
+      y: 4.45,
+      w: safetyTextW,
+      h: 0.34,
+      fontFace: "Aptos",
+      fontSize: 22,
+      bold: true,
+      color: safetyInjuries > 0 ? "B92C2C" : "1B8F5A",
+      align: "center",
+    });
+    slide.addText(`Incidents: ${safetyIncidents}`, {
+      x: safetyTextX,
+      y: 5.0,
+      w: safetyTextW,
+      h: 0.34,
+      fontFace: "Aptos",
+      fontSize: 22,
+      bold: true,
+      color: safetyIncidents > 0 ? "B92C2C" : "1B8F5A",
+      align: "center",
+    });
+    slide.addText("Details in report", {
+      x: safetyTextX,
+      y: 5.95,
+      w: safetyTextW,
+      h: 0.28,
+      fontFace: "Aptos",
+      fontSize: 12,
       color: "334155",
       bold: true,
       align: "center",
@@ -571,7 +680,7 @@ export async function GET(req: NextRequest) {
   }
 
   // Work order detail slides
-  for (const w of woRowsWithEmergent) {
+  for (const w of orderedWoRows) {
     const slide = pptx.addSlide();
     slide.background = { color: "FFFFFF" };
     slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 13.333, h: 0.2, fill: { color: accent }, line: { color: accent } });
@@ -658,7 +767,10 @@ export async function GET(req: NextRequest) {
     ] as const;
 
     for (const section of sections) {
-      const lines = section.rows.slice(0, 2).map((u) => `- ${cleanComment(u.comment) || "No comment"}`);
+      const lines = section.rows
+        .slice(0, 2)
+        .flatMap((u) => toBulletLines(cleanComment(u.comment)))
+        .slice(0, 6);
 
       slide.addShape(pptx.ShapeType.roundRect, {
         x: 0.6,
@@ -680,16 +792,34 @@ export async function GET(req: NextRequest) {
         color: "0F172A",
       });
 
-      slide.addText(lines.length ? lines.join("\n") : "No entries.", {
-        x: 0.82,
-        y: section.y + 0.42,
-        w: 6.95,
-        h: Math.max(section.h - 0.55, 0.7),
-        fontFace: "Aptos",
-        fontSize: 11,
-        color: "334155",
-        breakLine: true,
-      });
+      if (lines.length) {
+        const bulletRuns = lines.map((line, idx) => ({
+          text: line,
+          options: {
+            bullet: { indent: 14 },
+            breakLine: idx < lines.length - 1,
+          },
+        }));
+        slide.addText(bulletRuns as unknown as never, {
+          x: 0.82,
+          y: section.y + 0.42,
+          w: 6.95,
+          h: Math.max(section.h - 0.55, 0.7),
+          fontFace: "Aptos",
+          fontSize: 11,
+          color: "334155",
+        });
+      } else {
+        slide.addText("No entries.", {
+          x: 0.82,
+          y: section.y + 0.42,
+          w: 6.95,
+          h: Math.max(section.h - 0.55, 0.7),
+          fontFace: "Aptos",
+          fontSize: 11,
+          color: "334155",
+        });
+      }
 
     }
 
@@ -764,6 +894,51 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  // Final slide: Feedback
+  {
+    const slide = pptx.addSlide();
+    slide.background = { color: "FFFFFF" };
+    slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 13.333, h: 0.2, fill: { color: accent }, line: { color: accent } });
+    if (logoData) {
+      slide.addImage({ data: logoData, x: 0.6, y: 0.32, w: 2.2, h: 0.8 });
+    }
+
+    slide.addText("Feedback", {
+      x: 3.0,
+      y: 0.45,
+      w: 9.7,
+      h: 0.5,
+      fontFace: "Aptos",
+      fontSize: 26,
+      bold: true,
+      color: "0F172A",
+    });
+
+    slide.addShape(pptx.ShapeType.roundRect, {
+      x: 0.6,
+      y: 1.1,
+      w: 12.1,
+      h: 6.0,
+      fill: { color: "F8FAFF" },
+      line: { color: "D8DEEA", pt: 1 },
+      radius: 0.12,
+    });
+
+    slide.addText("Enter additional feedback here...", {
+      x: 0.88,
+      y: 1.1,
+      w: 11.55,
+      h: 6.0,
+      fontFace: "Aptos",
+      fontSize: 14,
+      color: "64748B",
+      italic: true,
+      breakLine: true,
+      align: "center",
+      valign: "mid",
+    });
+  }
+
   const out = await pptx.write({ outputType: "nodebuffer" });
   const body = new Uint8Array(out as Buffer);
 
@@ -774,4 +949,5 @@ export async function GET(req: NextRequest) {
     },
   });
 }
+
 

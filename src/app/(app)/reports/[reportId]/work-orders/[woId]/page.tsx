@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
 
@@ -42,6 +42,15 @@ function stripEntryPrefix(comment: string | null): string | null {
   return comment;
 }
 
+function splitBulletLines(text: string | null) {
+  return (text ?? "")
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.replace(/^[\-\*\u2022]\s*/, "").trim())
+    .filter(Boolean);
+}
+
 export default function WorkOrderDetailPage() {
   const supabase = createSupabaseBrowser();
   const router = useRouter();
@@ -63,6 +72,8 @@ export default function WorkOrderDetailPage() {
   const [showCancelPrompt, setShowCancelPrompt] = useState(false);
   const [issuesComment, setIssuesComment] = useState("");
   const [issuesFiles, setIssuesFiles] = useState<File[]>([]);
+  const commentRef = useRef<HTMLTextAreaElement | null>(null);
+  const issuesRef = useRef<HTMLTextAreaElement | null>(null);
   const maxPhotosPerWo = 6;
 
   async function load() {
@@ -293,6 +304,76 @@ export default function WorkOrderDetailPage() {
     return [...current, ...accepted];
   }
 
+  function insertBullet(
+    ref: React.RefObject<HTMLTextAreaElement | null>,
+    currentValue: string,
+    setValue: (next: string) => void
+  ) {
+    const el = ref.current;
+    if (!el) {
+      setValue(`${currentValue}${currentValue.endsWith("\n") || currentValue.length === 0 ? "" : "\n"}• `);
+      return;
+    }
+
+    const start = el.selectionStart ?? currentValue.length;
+    const end = el.selectionEnd ?? currentValue.length;
+    const before = currentValue.slice(0, start);
+    const after = currentValue.slice(end);
+    const needsBreak = before.length > 0 && !before.endsWith("\n");
+    const insert = `${needsBreak ? "\n" : ""}• `;
+    const next = `${before}${insert}${after}`;
+    setValue(next);
+
+    queueMicrotask(() => {
+      const cursor = before.length + insert.length;
+      el.focus();
+      el.setSelectionRange(cursor, cursor);
+    });
+  }
+
+  function handleBulletEnter(
+    e: React.KeyboardEvent<HTMLTextAreaElement>,
+    ref: React.RefObject<HTMLTextAreaElement | null>,
+    currentValue: string,
+    setValue: (next: string) => void
+  ) {
+    if (e.key !== "Enter" || e.shiftKey) return;
+    e.preventDefault();
+    const el = ref.current;
+    if (!el) {
+      setValue(`${currentValue}\n• `.replace(/^\n/, "• "));
+      return;
+    }
+
+    const start = el.selectionStart ?? currentValue.length;
+    const end = el.selectionEnd ?? currentValue.length;
+    const lineStart = currentValue.lastIndexOf("\n", Math.max(start - 1, 0)) + 1;
+    const lineEndIdx = currentValue.indexOf("\n", start);
+    const lineEnd = lineEndIdx === -1 ? currentValue.length : lineEndIdx;
+    const currentLine = currentValue.slice(lineStart, lineEnd).trim();
+    if (currentLine === "•" || currentLine === "-") {
+      return;
+    }
+    const before = currentValue.slice(0, start);
+    const after = currentValue.slice(end);
+    const separator = before.length === 0 ? "" : "\n";
+    const next = `${before}${separator}• ${after}`;
+    setValue(next);
+
+    queueMicrotask(() => {
+      const cursor = before.length + separator.length + 2;
+      el.focus();
+      el.setSelectionRange(cursor, cursor);
+    });
+  }
+
+  function ensureLeadingBullet(value: string, setValue: (next: string) => void) {
+    const trimmed = value.trim();
+    if (!trimmed) return;
+    if (/^[\-\*\u2022]\s+/.test(value)) return;
+    setValue(`• ${value}`);
+  }
+
   if (loading) return <p className="muted">Loading...</p>;
 
   if (err) {
@@ -393,10 +474,18 @@ export default function WorkOrderDetailPage() {
 
         <textarea
           className="textarea"
+          ref={commentRef}
           value={comment}
           onChange={(e) => setComment(e.target.value)}
+          onFocus={() => {
+            if (!comment.trim()) setComment("• ");
+          }}
+          onBlur={() => ensureLeadingBullet(comment, setComment)}
+          onKeyDown={(e) => handleBulletEnter(e, commentRef, comment, setComment)}
           placeholder="Write completion comments..."
           rows={4}
+          wrap="off"
+          style={{ paddingLeft: "0.8rem", overflowX: "auto" }}
         />
 
         <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", alignItems: "center" }}>
@@ -432,6 +521,13 @@ export default function WorkOrderDetailPage() {
 
           <span className="muted">Selected: {files.length}</span>
           <span className="muted">WO photos remaining: {remainingPhotoSlots}</span>
+          <button
+            type="button"
+            className="btn btn-soft"
+            onClick={() => insertBullet(commentRef, comment, setComment)}
+          >
+            Add bullet
+          </button>
         </div>
 
         <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
@@ -450,10 +546,18 @@ export default function WorkOrderDetailPage() {
         <h3>Issues/Recommendations</h3>
         <textarea
           className="textarea"
+          ref={issuesRef}
           value={issuesComment}
           onChange={(e) => setIssuesComment(e.target.value)}
+          onFocus={() => {
+            if (!issuesComment.trim()) setIssuesComment("• ");
+          }}
+          onBlur={() => ensureLeadingBullet(issuesComment, setIssuesComment)}
+          onKeyDown={(e) => handleBulletEnter(e, issuesRef, issuesComment, setIssuesComment)}
           placeholder="Describe issue or recommendation..."
           rows={3}
+          wrap="off"
+          style={{ paddingLeft: "0.8rem", overflowX: "auto" }}
         />
         <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", alignItems: "center" }}>
           <label className="btn btn-soft" style={{ cursor: "pointer" }}>
@@ -485,6 +589,13 @@ export default function WorkOrderDetailPage() {
             />
           </label>
           <span className="muted">Selected: {issuesFiles.length}</span>
+          <button
+            type="button"
+            className="btn btn-soft"
+            onClick={() => insertBullet(issuesRef, issuesComment, setIssuesComment)}
+          >
+            Add bullet
+          </button>
         </div>
         <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
           <button
@@ -506,7 +617,13 @@ export default function WorkOrderDetailPage() {
               {new Date(u.created_at).toLocaleString()}
             </div>
 
-            {u.comment ? <div style={{ marginTop: "0.45rem" }}>{stripEntryPrefix(u.comment)}</div> : null}
+            {u.comment ? (
+              <ul style={{ marginTop: "0.45rem", marginBottom: 0, paddingLeft: "1.2rem" }}>
+                {splitBulletLines(stripEntryPrefix(u.comment)).map((line, idx) => (
+                  <li key={`${u.id}-comment-${idx}`}>{line}</li>
+                ))}
+              </ul>
+            ) : null}
 
             {u.photo_urls?.length ? (
               <div className="photo-grid" style={{ marginTop: "0.65rem" }}>
@@ -541,7 +658,13 @@ export default function WorkOrderDetailPage() {
             <div className="muted" style={{ fontSize: "0.78rem" }}>
               {new Date(u.created_at).toLocaleString()}
             </div>
-            {u.comment ? <div style={{ marginTop: "0.45rem" }}>{stripEntryPrefix(u.comment)}</div> : null}
+            {u.comment ? (
+              <ul style={{ marginTop: "0.45rem", marginBottom: 0, paddingLeft: "1.2rem" }}>
+                {splitBulletLines(stripEntryPrefix(u.comment)).map((line, idx) => (
+                  <li key={`${u.id}-issue-${idx}`}>{line}</li>
+                ))}
+              </ul>
+            ) : null}
             {u.photo_urls?.length ? (
               <div className="photo-grid" style={{ marginTop: "0.65rem" }}>
                 {u.photo_urls.map((path) => (
