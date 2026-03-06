@@ -934,7 +934,7 @@ export async function GET(req: NextRequest) {
       italic: true,
       breakLine: true,
       align: "center",
-      valign: "mid",
+      valign: "middle",
     });
   }
 
