@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
+import { useProfile } from "@/lib/useProfile";
+import { hasManagerAccess } from "@/lib/roles";
 
 type WorkOrder = {
   id: string;
@@ -53,6 +55,7 @@ function splitBulletLines(text: string | null) {
 
 export default function WorkOrderDetailPage() {
   const supabase = createSupabaseBrowser();
+  const { profile } = useProfile();
   const router = useRouter();
   const { reportId, woId } = useParams<{ reportId: string; woId: string }>();
 
@@ -72,6 +75,12 @@ export default function WorkOrderDetailPage() {
   const [showCancelPrompt, setShowCancelPrompt] = useState(false);
   const [issuesComment, setIssuesComment] = useState("");
   const [issuesFiles, setIssuesFiles] = useState<File[]>([]);
+  const [editingUpdateId, setEditingUpdateId] = useState<string | null>(null);
+  const [editingComment, setEditingComment] = useState("");
+  const [savingEditId, setSavingEditId] = useState<string | null>(null);
+  const [editingIssueId, setEditingIssueId] = useState<string | null>(null);
+  const [editingIssueComment, setEditingIssueComment] = useState("");
+  const [savingIssueEditId, setSavingIssueEditId] = useState<string | null>(null);
   const commentRef = useRef<HTMLTextAreaElement | null>(null);
   const issuesRef = useRef<HTMLTextAreaElement | null>(null);
   const maxPhotosPerWo = 6;
@@ -281,6 +290,100 @@ export default function WorkOrderDetailPage() {
     setMsg(isUpdate ? "Update added" : "Issue saved");
     if (isUpdate) setSaving(false);
     if (isIssue) setSavingIssues(false);
+    await load();
+  }
+
+  async function saveExistingCompletionComment(updateId: string) {
+    if (!hasManagerAccess(profile?.role)) {
+      setErr("Only managers and owners can edit saved completion comments.");
+      return;
+    }
+
+    const cleaned = editingComment.trim();
+    if (!cleaned) {
+      setErr("Comment cannot be empty.");
+      return;
+    }
+
+    setErr(null);
+    setMsg(null);
+    setSavingEditId(updateId);
+
+    const { data: sessionRes, error: sessionErr } = await supabase.auth.getSession();
+    const token = sessionRes.session?.access_token;
+    if (sessionErr || !token) {
+      setSavingEditId(null);
+      setErr("You must be signed in to edit comments.");
+      return;
+    }
+
+    const res = await fetch("/api/edit-wo-update-comment", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ updateId, comment: cleaned, entryKind: "completion" }),
+    });
+
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setSavingEditId(null);
+      setErr(typeof json?.error === "string" ? json.error : "Failed to update comment.");
+      return;
+    }
+
+    setSavingEditId(null);
+    setEditingUpdateId(null);
+    setEditingComment("");
+    setMsg("Completion comment updated");
+    await load();
+  }
+
+  async function saveExistingIssueComment(updateId: string) {
+    if (!hasManagerAccess(profile?.role)) {
+      setErr("Only managers and owners can edit saved issues/recommendations.");
+      return;
+    }
+
+    const cleaned = editingIssueComment.trim();
+    if (!cleaned) {
+      setErr("Issue/recommendation cannot be empty.");
+      return;
+    }
+
+    setErr(null);
+    setMsg(null);
+    setSavingIssueEditId(updateId);
+
+    const { data: sessionRes, error: sessionErr } = await supabase.auth.getSession();
+    const token = sessionRes.session?.access_token;
+    if (sessionErr || !token) {
+      setSavingIssueEditId(null);
+      setErr("You must be signed in to edit issues/recommendations.");
+      return;
+    }
+
+    const res = await fetch("/api/edit-wo-update-comment", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ updateId, comment: cleaned, entryKind: "issue" }),
+    });
+
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setSavingIssueEditId(null);
+      setErr(typeof json?.error === "string" ? json.error : "Failed to update issue/recommendation.");
+      return;
+    }
+
+    setSavingIssueEditId(null);
+    setEditingIssueId(null);
+    setEditingIssueComment("");
+    setMsg("Issue/recommendation updated");
     await load();
   }
 
@@ -617,13 +720,61 @@ export default function WorkOrderDetailPage() {
               {new Date(u.created_at).toLocaleString()}
             </div>
 
-            {u.comment ? (
-              <ul style={{ marginTop: "0.45rem", marginBottom: 0, paddingLeft: "1.2rem" }}>
-                {splitBulletLines(stripEntryPrefix(u.comment)).map((line, idx) => (
-                  <li key={`${u.id}-comment-${idx}`}>{line}</li>
-                ))}
-              </ul>
-            ) : null}
+            {editingUpdateId === u.id ? (
+              <div className="grid" style={{ marginTop: "0.5rem", gap: "0.55rem" }}>
+                <textarea
+                  className="textarea"
+                  value={editingComment}
+                  onChange={(e) => setEditingComment(e.target.value)}
+                  rows={4}
+                  placeholder="Edit saved completion comment..."
+                />
+                <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => saveExistingCompletionComment(u.id)}
+                    disabled={savingEditId === u.id || !editingComment.trim()}
+                  >
+                    {savingEditId === u.id ? "Saving..." : "Save edit"}
+                  </button>
+                  <button
+                    className="btn btn-soft"
+                    onClick={() => {
+                      setEditingUpdateId(null);
+                      setEditingComment("");
+                    }}
+                    disabled={savingEditId === u.id}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                {u.comment ? (
+                  <ul style={{ marginTop: "0.45rem", marginBottom: 0, paddingLeft: "1.2rem" }}>
+                    {splitBulletLines(stripEntryPrefix(u.comment)).map((line, idx) => (
+                      <li key={`${u.id}-comment-${idx}`}>{line}</li>
+                    ))}
+                  </ul>
+                ) : null}
+                {hasManagerAccess(profile?.role) && u.comment ? (
+                  <div style={{ marginTop: "0.6rem" }}>
+                    <button
+                      className="btn btn-soft"
+                      onClick={() => {
+                        setEditingUpdateId(u.id);
+                        setEditingComment(stripEntryPrefix(u.comment) ?? "");
+                        setErr(null);
+                        setMsg(null);
+                      }}
+                    >
+                      Edit saved comment
+                    </button>
+                  </div>
+                ) : null}
+              </>
+            )}
 
             {u.photo_urls?.length ? (
               <div className="photo-grid" style={{ marginTop: "0.65rem" }}>
@@ -658,13 +809,61 @@ export default function WorkOrderDetailPage() {
             <div className="muted" style={{ fontSize: "0.78rem" }}>
               {new Date(u.created_at).toLocaleString()}
             </div>
-            {u.comment ? (
-              <ul style={{ marginTop: "0.45rem", marginBottom: 0, paddingLeft: "1.2rem" }}>
-                {splitBulletLines(stripEntryPrefix(u.comment)).map((line, idx) => (
-                  <li key={`${u.id}-issue-${idx}`}>{line}</li>
-                ))}
-              </ul>
-            ) : null}
+            {editingIssueId === u.id ? (
+              <div className="grid" style={{ marginTop: "0.5rem", gap: "0.55rem" }}>
+                <textarea
+                  className="textarea"
+                  value={editingIssueComment}
+                  onChange={(e) => setEditingIssueComment(e.target.value)}
+                  rows={3}
+                  placeholder="Edit saved issue/recommendation..."
+                />
+                <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => saveExistingIssueComment(u.id)}
+                    disabled={savingIssueEditId === u.id || !editingIssueComment.trim()}
+                  >
+                    {savingIssueEditId === u.id ? "Saving..." : "Save edit"}
+                  </button>
+                  <button
+                    className="btn btn-soft"
+                    onClick={() => {
+                      setEditingIssueId(null);
+                      setEditingIssueComment("");
+                    }}
+                    disabled={savingIssueEditId === u.id}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                {u.comment ? (
+                  <ul style={{ marginTop: "0.45rem", marginBottom: 0, paddingLeft: "1.2rem" }}>
+                    {splitBulletLines(stripEntryPrefix(u.comment)).map((line, idx) => (
+                      <li key={`${u.id}-issue-${idx}`}>{line}</li>
+                    ))}
+                  </ul>
+                ) : null}
+                {hasManagerAccess(profile?.role) && u.comment ? (
+                  <div style={{ marginTop: "0.6rem" }}>
+                    <button
+                      className="btn btn-soft"
+                      onClick={() => {
+                        setEditingIssueId(u.id);
+                        setEditingIssueComment(stripEntryPrefix(u.comment) ?? "");
+                        setErr(null);
+                        setMsg(null);
+                      }}
+                    >
+                      Edit saved issue/recommendation
+                    </button>
+                  </div>
+                ) : null}
+              </>
+            )}
             {u.photo_urls?.length ? (
               <div className="photo-grid" style={{ marginTop: "0.65rem" }}>
                 {u.photo_urls.map((path) => (
