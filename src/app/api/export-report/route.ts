@@ -184,7 +184,12 @@ function getErrorMessage(err: unknown) {
 
 function isMissingColumnError(err: unknown, column: string) {
   const msg = getErrorMessage(err).toLowerCase();
-  return msg.includes("column") && msg.includes(column.toLowerCase()) && msg.includes("does not exist");
+  return (
+    msg.includes(column.toLowerCase()) &&
+    (msg.includes("does not exist") ||
+      msg.includes("could not find") ||
+      msg.includes("schema cache"))
+  );
 }
 
 function sortEmergentLast<T extends { emergent_work: boolean; display_order?: number | null; created_at?: string | null }>(
@@ -276,22 +281,40 @@ export async function GET(req: NextRequest) {
   let reportErr: { message: string } | null = null;
 
   if (reportSelectWithKeyPersonnel.error) {
-    const isFallbackNeeded =
-      isMissingColumnError(reportSelectWithKeyPersonnel.error, "key_personnel") ||
-      isMissingColumnError(reportSelectWithKeyPersonnel.error, "safety_injuries") ||
-      isMissingColumnError(reportSelectWithKeyPersonnel.error, "safety_incidents");
+    const missingKeyPersonnel = isMissingColumnError(reportSelectWithKeyPersonnel.error, "key_personnel");
+    const missingSafetyInjuries = isMissingColumnError(reportSelectWithKeyPersonnel.error, "safety_injuries");
+    const missingSafetyIncidents = isMissingColumnError(reportSelectWithKeyPersonnel.error, "safety_incidents");
+    const isFallbackNeeded = missingKeyPersonnel || missingSafetyInjuries || missingSafetyIncidents;
     if (!isFallbackNeeded) {
       reportErr = { message: reportSelectWithKeyPersonnel.error.message };
     } else {
+      const fallbackSelect = [
+        "id",
+        "tenant_id",
+        "name",
+        "start_date",
+        "end_date",
+        "status",
+        missingKeyPersonnel ? null : "key_personnel",
+        missingSafetyInjuries ? null : "safety_injuries",
+        missingSafetyIncidents ? null : "safety_incidents",
+      ]
+        .filter(Boolean)
+        .join(", ");
       const fallback = await supabase
         .from("reports")
-        .select("id, tenant_id, name, start_date, end_date, status")
+        .select(fallbackSelect)
         .eq("id", id)
-        .single<Omit<ReportRow, "key_personnel" | "safety_injuries" | "safety_incidents">>();
+        .single<Partial<ReportRow> & Pick<ReportRow, "id" | "tenant_id" | "name" | "start_date" | "end_date" | "status">>();
       if (fallback.error || !fallback.data) {
         reportErr = { message: fallback.error?.message ?? "Report not found" };
       } else {
-        report = { ...fallback.data, key_personnel: null, safety_injuries: 0, safety_incidents: 0 };
+        report = {
+          ...fallback.data,
+          key_personnel: missingKeyPersonnel ? null : (fallback.data.key_personnel ?? null),
+          safety_injuries: missingSafetyInjuries ? 0 : (fallback.data.safety_injuries ?? 0),
+          safety_incidents: missingSafetyIncidents ? 0 : (fallback.data.safety_incidents ?? 0),
+        };
       }
     }
   } else if (reportSelectWithKeyPersonnel.data?.length) {
@@ -644,28 +667,38 @@ export async function GET(req: NextRequest) {
     const safetyTextW = 2.95;
     const safetyTextX = safetyX + (panelW - safetyTextW) / 2;
 
-    slide.addText(`Injuries: ${safetyInjuries}`, {
-      x: safetyTextX,
-      y: 4.45,
-      w: safetyTextW,
-      h: 0.34,
-      fontFace: "Aptos",
-      fontSize: 22,
-      bold: true,
-      color: safetyInjuries > 0 ? "B92C2C" : "1B8F5A",
-      align: "center",
-    });
-    slide.addText(`Incidents: ${safetyIncidents}`, {
-      x: safetyTextX,
-      y: 5.0,
-      w: safetyTextW,
-      h: 0.34,
-      fontFace: "Aptos",
-      fontSize: 22,
-      bold: true,
-      color: safetyIncidents > 0 ? "B92C2C" : "1B8F5A",
-      align: "center",
-    });
+    slide.addText(
+      [
+        { text: "Injuries: ", options: { color: "334155" } },
+        { text: String(safetyInjuries), options: { color: safetyInjuries > 0 ? "B92C2C" : "1B8F5A" } },
+      ],
+      {
+        x: safetyTextX,
+        y: 4.45,
+        w: safetyTextW,
+        h: 0.34,
+        fontFace: "Aptos",
+        fontSize: 22,
+        bold: true,
+        align: "center",
+      }
+    );
+    slide.addText(
+      [
+        { text: "Incidents: ", options: { color: "334155" } },
+        { text: String(safetyIncidents), options: { color: safetyIncidents > 0 ? "B92C2C" : "1B8F5A" } },
+      ],
+      {
+        x: safetyTextX,
+        y: 5.0,
+        w: safetyTextW,
+        h: 0.34,
+        fontFace: "Aptos",
+        fontSize: 22,
+        bold: true,
+        align: "center",
+      }
+    );
     slide.addText("Details in report", {
       x: safetyTextX,
       y: 5.95,
@@ -740,18 +773,20 @@ export async function GET(req: NextRequest) {
       w.status === "cancelled"
         ? `Reason: ${w.cancelled_reason ?? "Not provided"}`
         : w.status === "complete"
-        ? "Completed"
+        ? null
         : "In progress";
 
-    slide.addText(statusMeta, {
-      x: 0.6,
-      y: 1.78,
-      w: 7.35,
-      h: 0.22,
-      fontFace: "Aptos",
-      fontSize: 11,
-      color: "334155",
-    });
+    if (statusMeta) {
+      slide.addText(statusMeta, {
+        x: 0.6,
+        y: 1.78,
+        w: 7.35,
+        h: 0.22,
+        fontFace: "Aptos",
+        fontSize: 11,
+        color: "334155",
+      });
+    }
 
     const comments = list.filter((u) => getEntryKind(u.comment) === "comments");
     const issues = list.filter((u) => getEntryKind(u.comment) === "issues");

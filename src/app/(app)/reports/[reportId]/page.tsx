@@ -41,7 +41,12 @@ function getErrorMessage(err: unknown) {
 
 function isMissingColumnError(err: unknown, column: string) {
   const msg = getErrorMessage(err).toLowerCase();
-  return msg.includes("column") && msg.includes(column.toLowerCase()) && msg.includes("does not exist");
+  return (
+    msg.includes(column.toLowerCase()) &&
+    (msg.includes("does not exist") ||
+      msg.includes("could not find") ||
+      msg.includes("schema cache"))
+  );
 }
 
 export default function ReportDetailPage() {
@@ -61,6 +66,8 @@ export default function ReportDetailPage() {
   const [safetyIncidents, setSafetyIncidents] = useState("0");
   const [savingSafety, setSavingSafety] = useState(false);
   const [safetyMsg, setSafetyMsg] = useState<string | null>(null);
+  const [hasSafetyInjuriesColumn, setHasSafetyInjuriesColumn] = useState(true);
+  const [hasSafetyIncidentsColumn, setHasSafetyIncidentsColumn] = useState(true);
 
   useEffect(() => {
     async function load() {
@@ -78,9 +85,13 @@ export default function ReportDetailPage() {
       let error: { message: string } | null = null;
 
       if (reportWithSafety.error) {
+        const missingInjuries = isMissingColumnError(reportWithSafety.error, "safety_injuries");
+        const missingIncidents = isMissingColumnError(reportWithSafety.error, "safety_incidents");
+        setHasSafetyInjuriesColumn(!missingInjuries);
+        setHasSafetyIncidentsColumn(!missingIncidents);
         if (
-          isMissingColumnError(reportWithSafety.error, "safety_injuries") ||
-          isMissingColumnError(reportWithSafety.error, "safety_incidents")
+          missingInjuries ||
+          missingIncidents
         ) {
           const fallback = await supabase
             .from("reports")
@@ -96,6 +107,8 @@ export default function ReportDetailPage() {
           error = { message: reportWithSafety.error.message };
         }
       } else if (reportWithSafety.data) {
+        setHasSafetyInjuriesColumn(true);
+        setHasSafetyIncidentsColumn(true);
         data = reportWithSafety.data as ReportRow;
       }
       const { data: sessionRes, error: sessionErr } = await supabase.auth.getSession();
@@ -210,20 +223,76 @@ export default function ReportDetailPage() {
     const injuries = Math.max(Number.parseInt(safetyInjuries || "0", 10) || 0, 0);
     const incidents = Math.max(Number.parseInt(safetyIncidents || "0", 10) || 0, 0);
 
-    const { error } = await supabase
-      .from("reports")
-      .update({
+    if (!hasSafetyInjuriesColumn && !hasSafetyIncidentsColumn) {
+      setSavingSafety(false);
+      setReport({
+        ...report,
         safety_injuries: injuries,
         safety_incidents: incidents,
-      })
+      });
+      setSafetyMsg("Safety fields are not available in the current database schema yet, so this value could not be saved to Supabase.");
+      return;
+    }
+
+    const desiredUpdate = {
+      safety_injuries: injuries,
+      safety_incidents: incidents,
+    };
+    const safeUpdate: Partial<typeof desiredUpdate> = {};
+    if (hasSafetyInjuriesColumn) safeUpdate.safety_injuries = injuries;
+    if (hasSafetyIncidentsColumn) safeUpdate.safety_incidents = incidents;
+
+    const { error } = await supabase
+      .from("reports")
+      .update(safeUpdate)
       .eq("id", report.id);
 
-    setSavingSafety(false);
     if (error) {
+      const missingInjuries = isMissingColumnError(error, "safety_injuries");
+      const missingIncidents = isMissingColumnError(error, "safety_incidents");
+
+      if (missingInjuries || missingIncidents) {
+        const fallbackUpdate: Partial<typeof desiredUpdate> = {};
+        if (!missingInjuries) fallbackUpdate.safety_injuries = injuries;
+        if (!missingIncidents) fallbackUpdate.safety_incidents = incidents;
+
+        if (Object.keys(fallbackUpdate).length > 0) {
+          const { error: fallbackError } = await supabase
+            .from("reports")
+            .update(fallbackUpdate)
+            .eq("id", report.id);
+
+          setSavingSafety(false);
+          if (fallbackError) {
+            setSafetyMsg(`Save failed: ${fallbackError.message}`);
+            return;
+          }
+
+          setReport({
+            ...report,
+            safety_injuries: missingInjuries ? report.safety_injuries : injuries,
+            safety_incidents: missingIncidents ? report.safety_incidents : incidents,
+          });
+          setSafetyMsg("Safety compliance saved, but some fields could not be stored until the database schema is updated.");
+          return;
+        }
+
+        setSavingSafety(false);
+        setReport({
+          ...report,
+          safety_injuries: injuries,
+          safety_incidents: incidents,
+        });
+        setSafetyMsg("Safety fields are not available in the current database schema yet, so this value could not be saved to Supabase.");
+        return;
+      }
+
+      setSavingSafety(false);
       setSafetyMsg(`Save failed: ${error.message}`);
       return;
     }
 
+    setSavingSafety(false);
     setReport({ ...report, safety_injuries: injuries, safety_incidents: incidents });
     setSafetyMsg("Safety compliance saved");
   }
