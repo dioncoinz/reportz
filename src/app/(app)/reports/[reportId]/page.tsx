@@ -27,7 +27,6 @@ function isArchivedReport(r: ReportRow) {
 function displayReportName(name: string) {
   return name.startsWith(ARCHIVE_PREFIX) ? name.slice(ARCHIVE_PREFIX.length).trim() : name;
 }
-
 export default function ReportDetailPage() {
   const supabase = createSupabaseBrowser();
   const { profile, userId } = useProfile();
@@ -62,6 +61,7 @@ export default function ReportDetailPage() {
 
       if (error) {
         setErr(error.message);
+      
         setReport(null);
       } else {
         setReport(data as ReportRow);

@@ -10,6 +10,8 @@ type ReportRow = {
   name: string;
   start_date: string | null;
   end_date: string | null;
+  safety_injuries: number | null;
+  safety_incidents: number | null;
   status: string;
 };
 
@@ -101,7 +103,6 @@ function startMonthYear(dateStr: string | null) {
   if (Number.isNaN(d.getTime())) return "N/A";
   return d.toLocaleString("en-US", { month: "long", year: "numeric" });
 }
-
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization") ?? "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
@@ -121,7 +122,7 @@ export async function GET(req: NextRequest) {
 
   const { data: report, error: reportErr } = await supabase
     .from("reports")
-    .select("id, tenant_id, name, start_date, end_date, status")
+    .select("id, tenant_id, name, start_date, end_date, safety_injuries, safety_incidents, status")
     .eq("id", id)
     .single<ReportRow>();
 
@@ -176,6 +177,8 @@ export async function GET(req: NextRequest) {
   const complete = woRows.filter((w) => w.status === "complete").length;
   const cancelled = woRows.filter((w) => w.status === "cancelled").length;
   const open = woRows.filter((w) => w.status === "open").length;
+  const safetyInjuries = Math.max(report.safety_injuries ?? 0, 0);
+  const safetyIncidents = Math.max(report.safety_incidents ?? 0, 0);
 
   const accent = normalizeHex(branding?.accent_hex, "C7662D");
   const company = branding?.company_name ?? "Reportz";
@@ -337,23 +340,29 @@ export async function GET(req: NextRequest) {
     // Schedule compliance (completed vs total)
     const compliancePct = pct(complete, Math.max(total, 1));
     const remaining = Math.max(total - complete, 0);
+    const complianceX = 3.95;
+    const safetyX = 8.25;
+    const panelY = 3.9;
+    const panelW = 4.1;
+    const panelH = 3.35;
 
     slide.addText("Schedule Compliance", {
-      x: 5.3,
+      x: complianceX,
       y: 3.55,
-      w: 4.8,
+      w: panelW,
       h: 0.3,
       fontFace: "Aptos",
       fontSize: 14,
       bold: true,
       color: "334155",
+      align: "center",
     });
 
     slide.addShape(pptx.ShapeType.roundRect, {
-      x: 5.25,
-      y: 3.9,
-      w: 7.1,
-      h: 3.05,
+      x: complianceX,
+      y: panelY,
+      w: panelW,
+      h: panelH,
       fill: { color: "F8FAFF" },
       line: { color: "D8DEEA", pt: 1 },
     });
@@ -364,10 +373,10 @@ export async function GET(req: NextRequest) {
         { name: "Compliance", labels: ["Completed", "Remaining"], values: [complete, remaining] },
       ],
       {
-        x: 5.5,
-        y: 4.15,
-        w: 3.4,
-        h: 2.5,
+        x: complianceX + 0.18,
+        y: 4.1,
+        w: 1.95,
+        h: 2.45,
         showLegend: false,
         holeSize: 68,
         chartColors: ["1B8F5A", "E2E8F0"],
@@ -376,33 +385,101 @@ export async function GET(req: NextRequest) {
     );
 
     slide.addText(`${compliancePct}%`, {
-      x: 8.95,
-      y: 4.45,
-      w: 2.9,
-      h: 0.62,
+      x: complianceX + 2.18,
+      y: 4.5,
+      w: 1.42,
+      h: 0.52,
       fontFace: "Aptos",
-      fontSize: 40,
+      fontSize: 30,
       bold: true,
       color: "1B8F5A",
       align: "center",
     });
     slide.addText("On-schedule completion", {
-      x: 8.95,
-      y: 5.08,
-      w: 2.9,
+      x: complianceX + 2.12,
+      y: 5.12,
+      w: 1.5,
       h: 0.28,
       fontFace: "Aptos",
-      fontSize: 10,
+      fontSize: 8,
       color: "64748B",
       align: "center",
     });
     slide.addText(`${complete} completed of ${total} total`, {
-      x: 8.95,
-      y: 5.42,
-      w: 2.9,
+      x: complianceX + 2.12,
+      y: 5.45,
+      w: 1.5,
       h: 0.25,
       fontFace: "Aptos",
-      fontSize: 11,
+      fontSize: 9,
+      color: "334155",
+      bold: true,
+      align: "center",
+    });
+
+    slide.addText("Safety Compliance", {
+      x: safetyX,
+      y: 3.55,
+      w: panelW,
+      h: 0.3,
+      fontFace: "Aptos",
+      fontSize: 14,
+      bold: true,
+      color: "334155",
+      align: "center",
+    });
+
+    slide.addShape(pptx.ShapeType.roundRect, {
+      x: safetyX,
+      y: panelY,
+      w: panelW,
+      h: panelH,
+      fill: { color: "F8FAFF" },
+      line: { color: "D8DEEA", pt: 1 },
+    });
+
+    const safetyTextW = 2.95;
+    const safetyTextX = safetyX + (panelW - safetyTextW) / 2;
+
+    slide.addText(
+      [
+        { text: "Injuries: ", options: { color: "334155" } },
+        { text: String(safetyInjuries), options: { color: safetyInjuries > 0 ? "B92C2C" : "1B8F5A" } },
+      ],
+      {
+        x: safetyTextX,
+        y: 4.45,
+        w: safetyTextW,
+        h: 0.34,
+        fontFace: "Aptos",
+        fontSize: 22,
+        bold: true,
+        align: "center",
+      }
+    );
+    slide.addText(
+      [
+        { text: "Incidents: ", options: { color: "334155" } },
+        { text: String(safetyIncidents), options: { color: safetyIncidents > 0 ? "B92C2C" : "1B8F5A" } },
+      ],
+      {
+        x: safetyTextX,
+        y: 5.0,
+        w: safetyTextW,
+        h: 0.34,
+        fontFace: "Aptos",
+        fontSize: 22,
+        bold: true,
+        align: "center",
+      }
+    );
+    slide.addText("Details in report", {
+      x: safetyTextX,
+      y: 5.95,
+      w: safetyTextW,
+      h: 0.28,
+      fontFace: "Aptos",
+      fontSize: 12,
       color: "334155",
       bold: true,
       align: "center",
