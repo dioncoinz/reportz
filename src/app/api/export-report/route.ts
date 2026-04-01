@@ -55,6 +55,7 @@ const PHOTO_JPEG_QUALITY = 82;
 const LOGO_MAX_WIDTH = 1200;
 const LOGO_MAX_HEIGHT = 400;
 const LOGO_JPEG_QUALITY = 85;
+const PHOTO_PROCESSING_CONCURRENCY = 3;
 
 function safe(name: string) {
   return name.replace(/[<>:"/\\|?*]/g, "").slice(0, 80);
@@ -129,6 +130,28 @@ async function optimizeImage(
       mime: imageMimeFromPath(path),
     };
   }
+}
+
+async function mapWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  worker: (item: T, index: number) => Promise<R>
+) {
+  const results = new Array<R>(items.length);
+  let nextIndex = 0;
+
+  async function runWorker() {
+    while (true) {
+      const currentIndex = nextIndex;
+      nextIndex += 1;
+      if (currentIndex >= items.length) return;
+      results[currentIndex] = await worker(items[currentIndex], currentIndex);
+    }
+  }
+
+  const workerCount = Math.min(limit, items.length);
+  await Promise.all(Array.from({ length: workerCount }, () => runWorker()));
+  return results;
 }
 
 function asDataUri(buf: Buffer, mime: string) {
@@ -961,14 +984,22 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    for (let i = 0; i < allPhotoPaths.length; i += 1) {
-      const path = allPhotoPaths[i];
+    const photoAssets = await mapWithConcurrency(allPhotoPaths, PHOTO_PROCESSING_CONCURRENCY, async (path) => {
       const pbuf = await file("report-photos", path);
-      if (!pbuf) continue;
+      if (!pbuf) return null;
 
       const optimizedPhoto = await optimizeImage(pbuf, path);
-      const photoData = asDataUri(optimizedPhoto.buffer, optimizedPhoto.mime);
-      const rotate = exifRotationDegrees(pbuf, path);
+      return {
+        photoData: asDataUri(optimizedPhoto.buffer, optimizedPhoto.mime),
+        rotate: exifRotationDegrees(pbuf, path),
+      };
+    });
+
+    for (let i = 0; i < photoAssets.length; i += 1) {
+      const asset = photoAssets[i];
+      if (!asset) continue;
+
+      const { photoData, rotate } = asset;
       const col = i % 2;
       const row = Math.floor(i / 2);
       const frameX = galleryX + 0.23 + col * 2.1;
