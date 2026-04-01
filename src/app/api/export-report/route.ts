@@ -1,4 +1,5 @@
 export const runtime = "nodejs";
+export const maxDuration = 300;
 
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
@@ -42,6 +43,13 @@ type UpdateRow = {
 
 const ISSUE_PREFIX = "__ISSUE__:";
 const NEXT_SHUT_PREFIX = "__NEXT_SHUT__:";
+const MAX_PHOTOS_PER_WORK_ORDER = 6;
+const PHOTO_MAX_WIDTH = 1600;
+const PHOTO_MAX_HEIGHT = 1200;
+const PHOTO_JPEG_QUALITY = 82;
+const LOGO_MAX_WIDTH = 1200;
+const LOGO_MAX_HEIGHT = 400;
+const LOGO_JPEG_QUALITY = 85;
 
 const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
@@ -70,6 +78,53 @@ async function file(bucket: string, path: string) {
   const { data } = await supabase.storage.from(bucket).download(path);
   if (!data) return null;
   return Buffer.from(await data.arrayBuffer());
+}
+
+async function optimizeImage(
+  buf: Buffer,
+  path: string,
+  options?: {
+    width?: number;
+    height?: number;
+    jpegQuality?: number;
+    preservePng?: boolean;
+    preserveWebp?: boolean;
+  }
+) {
+  try {
+    const { default: sharp } = await import("sharp");
+    const ext = path.toLowerCase();
+    const base = sharp(buf, { failOn: "none" }).rotate().resize({
+      width: options?.width ?? PHOTO_MAX_WIDTH,
+      height: options?.height ?? PHOTO_MAX_HEIGHT,
+      fit: "inside",
+      withoutEnlargement: true,
+    });
+
+    if (ext.endsWith(".png") && options?.preservePng) {
+      return {
+        buffer: await base.png({ compressionLevel: 9, palette: true }).toBuffer(),
+        mime: "image/png",
+      };
+    }
+
+    if (ext.endsWith(".webp") && options?.preserveWebp) {
+      return {
+        buffer: await base.webp({ quality: options?.jpegQuality ?? PHOTO_JPEG_QUALITY }).toBuffer(),
+        mime: "image/webp",
+      };
+    }
+
+    return {
+      buffer: await base.jpeg({ quality: options?.jpegQuality ?? PHOTO_JPEG_QUALITY, mozjpeg: true }).toBuffer(),
+      mime: "image/jpeg",
+    };
+  } catch {
+    return {
+      buffer: buf,
+      mime: imageMimeFromPath(path),
+    };
+  }
 }
 
 function asDataUri(buf: Buffer, mime: string) {
@@ -186,7 +241,16 @@ export async function GET(req: NextRequest) {
   let logoData: string | null = null;
   if (branding?.logo_path) {
     const logo = await file("branding-logos", branding.logo_path);
-    if (logo) logoData = asDataUri(logo, imageMimeFromPath(branding.logo_path));
+    if (logo) {
+      const optimizedLogo = await optimizeImage(logo, branding.logo_path, {
+        width: LOGO_MAX_WIDTH,
+        height: LOGO_MAX_HEIGHT,
+        jpegQuality: LOGO_JPEG_QUALITY,
+        preservePng: true,
+        preserveWebp: true,
+      });
+      logoData = asDataUri(optimizedLogo.buffer, optimizedLogo.mime);
+    }
   }
 
   const pptx = new PptxGenJS();
@@ -542,7 +606,7 @@ export async function GET(req: NextRequest) {
 
     const comments = list.filter((u) => getEntryKind(u.comment) === "comments");
     const issues = list.filter((u) => getEntryKind(u.comment) === "issues");
-    const allPhotoPaths = list.flatMap((u) => u.photo_urls ?? []).slice(0, 6);
+    const allPhotoPaths = [...new Set(list.flatMap((u) => u.photo_urls ?? []))].slice(0, MAX_PHOTOS_PER_WORK_ORDER);
 
     const sections = [
       { title: "Comments", rows: comments, y: 2.05 },
@@ -629,7 +693,8 @@ export async function GET(req: NextRequest) {
       const pbuf = await file("report-photos", path);
       if (!pbuf) continue;
 
-      const photoData = asDataUri(pbuf, imageMimeFromPath(path));
+      const optimizedPhoto = await optimizeImage(pbuf, path);
+      const photoData = asDataUri(optimizedPhoto.buffer, optimizedPhoto.mime);
       const col = i % 2;
       const row = Math.floor(i / 2);
       const x = galleryX + 0.23 + col * 2.1;
