@@ -152,11 +152,28 @@ function cleanComment(comment: string | null) {
   return comment.trim();
 }
 
+function asBulletRuns(rows: UpdateRow[]) {
+  return rows.slice(0, 2).map((u, index, arr) => ({
+    text: cleanComment(u.comment) || "No comment",
+    options: {
+      bullet: { indent: 14 },
+      breakLine: index < arr.length - 1,
+    },
+  }));
+}
+
 function startMonthYear(dateStr: string | null) {
   if (!dateStr) return "N/A";
   const d = new Date(dateStr);
   if (Number.isNaN(d.getTime())) return "N/A";
   return d.toLocaleString("en-US", { month: "long", year: "numeric" });
+}
+
+function formatCompletedDate(dateStr: string | null) {
+  if (!dateStr) return "N/A";
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return "N/A";
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
 }
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization") ?? "";
@@ -591,7 +608,7 @@ export async function GET(req: NextRequest) {
       w.status === "cancelled"
         ? `Reason: ${w.cancelled_reason ?? "Not provided"}`
         : w.status === "complete"
-        ? `Completed at: ${w.completed_at ? new Date(w.completed_at).toLocaleString() : "N/A"}`
+        ? `Completed: ${formatCompletedDate(w.completed_at)}`
         : "In progress";
 
     slide.addText(statusMeta, {
@@ -606,21 +623,23 @@ export async function GET(req: NextRequest) {
 
     const comments = list.filter((u) => getEntryKind(u.comment) === "comments");
     const issues = list.filter((u) => getEntryKind(u.comment) === "issues");
+    const next = list.filter((u) => getEntryKind(u.comment) === "next");
     const allPhotoPaths = [...new Set(list.flatMap((u) => u.photo_urls ?? []))].slice(0, MAX_PHOTOS_PER_WORK_ORDER);
 
     const sections = [
       { title: "Comments", rows: comments, y: 2.05 },
-      { title: "Issues", rows: issues, y: 3.9 },
+      { title: "Issues", rows: issues, y: 3.78 },
+      { title: "Emergent Work", rows: next, y: 5.51 },
     ] as const;
 
     for (const section of sections) {
-      const lines = section.rows.slice(0, 2).map((u) => `- ${cleanComment(u.comment) || "No comment"}`);
+      const bulletRuns = asBulletRuns(section.rows);
 
       slide.addShape(pptx.ShapeType.roundRect, {
         x: 0.6,
         y: section.y,
         w: 7.35,
-        h: 1.6,
+        h: 1.45,
         fill: { color: "F8FAFF" },
         line: { color: "D8DEEA", pt: 1 },
       });
@@ -636,15 +655,14 @@ export async function GET(req: NextRequest) {
         color: "0F172A",
       });
 
-      slide.addText(lines.length ? lines.join("\n") : "No entries.", {
-        x: 0.82,
+      slide.addText(bulletRuns.length ? bulletRuns : "No entries.", {
+        x: 0.9,
         y: section.y + 0.42,
-        w: 6.95,
-        h: 1.04,
+        w: 6.8,
+        h: 0.9,
         fontFace: "Aptos",
         fontSize: 11,
         color: "334155",
-        breakLine: true,
       });
 
     }
