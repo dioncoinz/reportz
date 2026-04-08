@@ -298,6 +298,14 @@ h3 {
   gap: 10px;
 }
 
+.photo-card {
+  position: relative;
+}
+
+.photo-link {
+  display: block;
+}
+
 .photo-thumb {
   width: 180px;
   height: 120px;
@@ -306,6 +314,33 @@ h3 {
   object-fit: cover;
   image-orientation: from-image;
   background: var(--surface-soft);
+}
+
+.photo-delete-btn {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.45rem;
+  z-index: 1;
+  width: 2rem;
+  height: 2rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid color-mix(in srgb, var(--danger) 35%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, white 78%, var(--danger));
+  color: #8f1f1f;
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+}
+
+.photo-delete-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, white 62%, var(--danger));
+}
+
+.photo-delete-btn svg {
+  width: 0.95rem;
+  height: 0.95rem;
 }
 
 .error-text {
