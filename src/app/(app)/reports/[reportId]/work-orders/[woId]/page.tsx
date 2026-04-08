@@ -69,6 +69,7 @@ export default function WorkOrderDetailPage() {
   const [editingIssueId, setEditingIssueId] = useState<string | null>(null);
   const [editingIssueComment, setEditingIssueComment] = useState("");
   const [savingIssueEditId, setSavingIssueEditId] = useState<string | null>(null);
+  const [deletingPhotoKey, setDeletingPhotoKey] = useState<string | null>(null);
   const maxPhotosPerWo = 6;
 
   async function load() {
@@ -373,6 +374,48 @@ export default function WorkOrderDetailPage() {
     await load();
   }
 
+  async function deletePhoto(updateId: string, photoPath: string) {
+    const confirmed = window.confirm("Delete this photo from the work order?");
+    if (!confirmed) return;
+
+    setErr(null);
+    setMsg(null);
+    setDeletingPhotoKey(`${updateId}:${photoPath}`);
+
+    const { data: sessionRes, error: sessionErr } = await supabase.auth.getSession();
+    const token = sessionRes.session?.access_token;
+    if (sessionErr || !token) {
+      setDeletingPhotoKey(null);
+      setErr("You must be signed in to delete photos.");
+      return;
+    }
+
+    const res = await fetch("/api/delete-wo-photo", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ updateId, photoPath }),
+    });
+
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setDeletingPhotoKey(null);
+      setErr(typeof json?.error === "string" ? json.error : "Failed to delete photo.");
+      return;
+    }
+
+    setSignedMap((prev) => {
+      const next = { ...prev };
+      delete next[photoPath];
+      return next;
+    });
+    setDeletingPhotoKey(null);
+    setMsg("Photo deleted");
+    await load();
+  }
+
   const generalUpdates = updates.filter((u) => getEntryKind(u.comment) === "update");
   const issueEntries = updates.filter((u) => getEntryKind(u.comment) === "issue");
   const existingPhotoCount = updates.reduce((n, u) => n + (u.photo_urls?.length ?? 0), 0);
@@ -389,6 +432,44 @@ export default function WorkOrderDetailPage() {
       setErr(`Only ${maxPhotosPerWo} photos are allowed per work order.`);
     }
     return [...current, ...accepted];
+  }
+
+  function renderPhotoThumb(path: string, alt: string, updateId: string) {
+    const isDeleting = deletingPhotoKey === `${updateId}:${path}`;
+
+    return (
+      <div key={path} className="photo-card">
+        <button
+          type="button"
+          className="photo-delete-btn"
+          aria-label="Delete photo"
+          title="Delete photo"
+          disabled={isDeleting}
+          onClick={() => void deletePhoto(updateId, path)}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M9 3h6l1 2h4v2H4V5h4l1-2Zm1 7h2v7h-2v-7Zm4 0h2v7h-2v-7ZM7 10h2v7H7v-7Zm1 11c-1.1 0-2-.9-2-2V8h12v11c0 1.1-.9 2-2 2H8Z"
+              fill="currentColor"
+            />
+          </svg>
+        </button>
+
+        {signedMap[path] ? (
+          <a href={signedMap[path]} target="_blank" rel="noreferrer" className="photo-link">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={signedMap[path]} alt={alt} className="photo-thumb" />
+          </a>
+        ) : (
+          <div
+            className="photo-thumb"
+            style={{ display: "grid", placeItems: "center", color: "var(--muted)", fontSize: "0.8rem" }}
+          >
+            Loading photo...
+          </div>
+        )}
+      </div>
+    );
   }
 
   if (loading) return <p className="muted">Loading...</p>;
@@ -656,22 +737,7 @@ export default function WorkOrderDetailPage() {
 
             {u.photo_urls?.length ? (
               <div className="photo-grid" style={{ marginTop: "0.65rem" }}>
-                {u.photo_urls.map((path) => (
-                  signedMap[path] ? (
-                    <a key={path} href={signedMap[path]} target="_blank" rel="noreferrer">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={signedMap[path]} alt="WO photo" className="photo-thumb" />
-                    </a>
-                  ) : (
-                    <div
-                      key={path}
-                      className="photo-thumb"
-                      style={{ display: "grid", placeItems: "center", color: "var(--muted)", fontSize: "0.8rem" }}
-                    >
-                      Loading photo...
-                    </div>
-                  )
-                ))}
+                {u.photo_urls.map((path) => renderPhotoThumb(path, "WO photo", u.id))}
               </div>
             ) : null}
           </div>
@@ -738,22 +804,7 @@ export default function WorkOrderDetailPage() {
             )}
             {u.photo_urls?.length ? (
               <div className="photo-grid" style={{ marginTop: "0.65rem" }}>
-                {u.photo_urls.map((path) => (
-                  signedMap[path] ? (
-                    <a key={path} href={signedMap[path]} target="_blank" rel="noreferrer">
-                      {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img src={signedMap[path]} alt="Issue photo" className="photo-thumb" />
-                    </a>
-                  ) : (
-                    <div
-                      key={path}
-                      className="photo-thumb"
-                      style={{ display: "grid", placeItems: "center", color: "var(--muted)", fontSize: "0.8rem" }}
-                    >
-                      Loading photo...
-                    </div>
-                  )
-                ))}
+                {u.photo_urls.map((path) => renderPhotoThumb(path, "Issue photo", u.id))}
               </div>
             ) : null}
           </div>
