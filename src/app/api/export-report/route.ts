@@ -201,8 +201,13 @@ function titleParts(report: ReportRow) {
 }
 
 function asBulletRuns(rows: UpdateRow[]) {
-  return rows.slice(0, 2).map((u, index, arr) => ({
-    text: cleanComment(u.comment) || "No comment",
+  const nonEmptyRows = rows
+    .map((u) => ({ ...u, cleanedComment: cleanComment(u.comment) }))
+    .filter((u) => u.cleanedComment.length > 0)
+    .slice(0, 2);
+
+  return nonEmptyRows.map((u, index, arr) => ({
+    text: u.cleanedComment,
     options: {
       bullet: { indent: 14 },
       breakLine: index < arr.length - 1,
