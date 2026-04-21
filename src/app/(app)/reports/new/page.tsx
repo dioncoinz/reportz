@@ -9,8 +9,13 @@ export default function NewReportPage() {
   const [name, setName] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [keyPersonnel, setKeyPersonnel] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  function isMissingColumn(error: { message?: string; code?: string } | null, column: string) {
+    return Boolean(error?.message?.includes(column) || error?.code === "PGRST204");
+  }
 
   async function createReport(e: React.FormEvent) {
     e.preventDefault();
@@ -37,23 +42,52 @@ export default function NewReportPage() {
       return;
     }
 
-    const { data, error } = await supabase
-      .from("reports")
-      .insert({
-        tenant_id: profile.tenant_id,
-        name: `${clientName.trim()} ${name.trim()}`.trim(),
-        start_date: startDate || null,
-        end_date: endDate || null,
-        created_by: user.id,
-        status: "draft",
-      })
-      .select("id")
-      .single();
+    const baseReport = {
+      tenant_id: profile.tenant_id,
+      name: `${clientName.trim()} ${name.trim()}`.trim(),
+      start_date: startDate || null,
+      end_date: endDate || null,
+      created_by: user.id,
+      status: "draft",
+    };
+
+    const optionalReportFields = {
+      key_personnel: keyPersonnel.trim() || null,
+    };
+    let insertPayload: Record<string, string | null> = optionalReportFields;
+    let data: { id: string } | null = null;
+    let error: { message?: string; code?: string } | null = null;
+
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const result = await supabase
+        .from("reports")
+        .insert({
+          ...baseReport,
+          ...insertPayload,
+        })
+        .select("id")
+        .single();
+
+      data = result.data;
+      error = result.error;
+
+      if (!error) break;
+
+      const nextPayload = { ...insertPayload };
+      if (isMissingColumn(error, "key_personnel")) delete nextPayload.key_personnel;
+      if (Object.keys(nextPayload).length === Object.keys(insertPayload).length) break;
+      insertPayload = nextPayload;
+    }
 
     setLoading(false);
 
     if (error) {
-      setMsg(error.message);
+      setMsg(error.message ?? "Failed to create report.");
+      return;
+    }
+
+    if (!data) {
+      setMsg("Report was created, but Supabase did not return its id.");
       return;
     }
 
@@ -94,6 +128,17 @@ export default function NewReportPage() {
         <label className="field">
           <span className="label">End date</span>
           <input className="input" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+        </label>
+
+        <label className="field">
+          <span className="label">Key personnel (shown on export front page)</span>
+          <textarea
+            className="textarea"
+            value={keyPersonnel}
+            onChange={(e) => setKeyPersonnel(e.target.value)}
+            rows={4}
+            placeholder="Enter key personnel names/roles (one per line or comma separated)"
+          />
         </label>
 
         <button className="btn btn-primary" disabled={loading}>
