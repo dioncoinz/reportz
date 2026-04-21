@@ -811,13 +811,11 @@ export async function GET(req: NextRequest) {
 
     const comments = list.filter((u) => getEntryKind(u.comment) === "comments");
     const issues = list.filter((u) => getEntryKind(u.comment) === "issues");
-    const next = list.filter((u) => getEntryKind(u.comment) === "next");
     const allPhotoPaths = [...new Set(list.flatMap((u) => u.photo_urls ?? []))].slice(0, MAX_PHOTOS_PER_WORK_ORDER);
 
     const sections = [
-      { title: "Comments", rows: comments, y: 2.05 },
-      { title: "Issues", rows: issues, y: 3.78 },
-      { title: "Emergent Work", rows: next, y: 5.51 },
+      { title: "Completion Comments", rows: comments, y: 2.05, h: 1.7 },
+      { title: "Issues/Recommendations", rows: issues, y: 4.0, h: 1.95 },
     ] as const;
 
     for (const section of sections) {
@@ -827,7 +825,7 @@ export async function GET(req: NextRequest) {
         x: 0.6,
         y: section.y,
         w: 7.35,
-        h: 1.45,
+        h: section.h,
         fill: { color: "F8FAFF" },
         line: { color: "D8DEEA", pt: 1 },
       });
@@ -858,7 +856,7 @@ export async function GET(req: NextRequest) {
     const galleryX = 8.15;
     const galleryY = 2.05;
     const galleryW = 4.55;
-    const galleryH = 5.3;
+    const galleryH = 3.9;
     const galleryContentY = galleryY + 0.42;
 
     slide.addShape(pptx.ShapeType.roundRect, {
@@ -878,6 +876,7 @@ export async function GET(req: NextRequest) {
       fontSize: 12,
       bold: true,
       color: "0F172A",
+      align: "center",
     });
 
     if (!allPhotoPaths.length) {
