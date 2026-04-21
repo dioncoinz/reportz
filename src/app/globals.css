@@ -176,6 +176,10 @@ h3 {
   color: #64748b;
 }
 
+.status-emergent {
+  color: var(--accent);
+}
+
 .grid {
   display: grid;
   gap: 0.85rem;
