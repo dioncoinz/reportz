@@ -12,6 +12,8 @@ type ReportRow = {
   start_date: string | null;
   end_date: string | null;
   key_personnel: string | null;
+  vendor_key_contacts: string | null;
+  client_key_contacts: string | null;
   safety_injuries: number | null;
   safety_incidents: number | null;
   status: string;
@@ -157,6 +159,14 @@ function cleanComment(comment: string | null) {
   return comment.trim();
 }
 
+function contactText(value: string | null | undefined) {
+  return (value ?? "")
+    .split(/\r?\n|,/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
 function asBulletRuns(rows: UpdateRow[]) {
   return rows.slice(0, 2).map((u, index, arr) => ({
     text: cleanComment(u.comment) || "No comment",
@@ -197,7 +207,7 @@ export async function GET(req: NextRequest) {
   const id = req.nextUrl.searchParams.get("reportId");
   if (!id) return NextResponse.json({ error: "Missing reportId" }, { status: 400 });
 
-  const optionalReportColumns = ["key_personnel"] as const;
+  const optionalReportColumns = ["key_personnel", "vendor_key_contacts", "client_key_contacts"] as const;
   const missingReportColumns = new Set<(typeof optionalReportColumns)[number]>();
   let report: ReportRow | null = null;
   let reportErr: { message?: string; code?: string } | null = null;
@@ -210,6 +220,8 @@ export async function GET(req: NextRequest) {
       "start_date",
       "end_date",
       missingReportColumns.has("key_personnel") ? null : "key_personnel",
+      missingReportColumns.has("vendor_key_contacts") ? null : "vendor_key_contacts",
+      missingReportColumns.has("client_key_contacts") ? null : "client_key_contacts",
       "safety_injuries",
       "safety_incidents",
       "status",
@@ -225,6 +237,8 @@ export async function GET(req: NextRequest) {
       ? {
           ...result.data,
           key_personnel: result.data.key_personnel ?? null,
+          vendor_key_contacts: result.data.vendor_key_contacts ?? null,
+          client_key_contacts: result.data.client_key_contacts ?? null,
         }
       : null;
     reportErr = result.error;
@@ -297,6 +311,8 @@ export async function GET(req: NextRequest) {
 
   const accent = normalizeHex(branding?.accent_hex, "C7662D");
   const company = branding?.company_name ?? "Reportz";
+  const vendorContacts = contactText(report.vendor_key_contacts || report.key_personnel);
+  const clientContacts = contactText(report.client_key_contacts);
 
   let logoData: string | null = null;
   if (branding?.logo_path) {
@@ -393,13 +409,43 @@ export async function GET(req: NextRequest) {
       bold: true,
       color: "64748B",
     });
-    slide.addText(report.key_personnel?.trim() || "Not provided", {
+    slide.addText("Vendor", {
       x: 8.1,
-      y: 4.82,
-      w: 4.3,
-      h: 0.42,
+      y: 4.78,
+      w: 2,
+      h: 0.18,
       fontFace: "Aptos",
-      fontSize: 12,
+      fontSize: 8,
+      bold: true,
+      color: "64748B",
+    });
+    slide.addText("Client", {
+      x: 10.25,
+      y: 4.78,
+      w: 2,
+      h: 0.18,
+      fontFace: "Aptos",
+      fontSize: 8,
+      bold: true,
+      color: "64748B",
+    });
+    slide.addText(vendorContacts || "Not provided", {
+      x: 8.1,
+      y: 4.98,
+      w: 2,
+      h: 0.32,
+      fontFace: "Aptos",
+      fontSize: 8,
+      color: "334155",
+      fit: "shrink",
+    });
+    slide.addText(clientContacts || "Not provided", {
+      x: 10.25,
+      y: 4.98,
+      w: 2.2,
+      h: 0.32,
+      fontFace: "Aptos",
+      fontSize: 8,
       color: "334155",
       fit: "shrink",
     });
