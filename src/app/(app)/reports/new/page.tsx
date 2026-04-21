@@ -6,12 +6,16 @@ import { createSupabaseBrowser } from "@/lib/supabase/client";
 export default function NewReportPage() {
   const supabase = createSupabaseBrowser();
   const [clientName, setClientName] = useState("");
+  const [siteName, setSiteName] = useState("");
   const [name, setName] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [keyPersonnel, setKeyPersonnel] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  function isMissingSiteNameColumn(error: { message?: string; code?: string } | null) {
+    return Boolean(error?.message?.includes("site_name") || error?.code === "PGRST204");
+  }
 
   async function createReport(e: React.FormEvent) {
     e.preventDefault();
@@ -38,24 +42,39 @@ export default function NewReportPage() {
       return;
     }
 
-    const { data, error } = await supabase
+    const baseReport = {
+      tenant_id: profile.tenant_id,
+      name: `${clientName.trim()} ${name.trim()}`.trim(),
+      start_date: startDate || null,
+      end_date: endDate || null,
+      created_by: user.id,
+      status: "draft",
+    };
+
+    let { data, error } = await supabase
       .from("reports")
       .insert({
-        tenant_id: profile.tenant_id,
-        name: `${clientName.trim()} ${name.trim()}`.trim(),
-        start_date: startDate || null,
-        end_date: endDate || null,
-        key_personnel: keyPersonnel.trim() || null,
-        created_by: user.id,
-        status: "draft",
+        ...baseReport,
+        site_name: siteName.trim() || null,
       })
       .select("id")
       .single();
+
+    if (isMissingSiteNameColumn(error)) {
+      const fallback = await supabase.from("reports").insert(baseReport).select("id").single();
+      data = fallback.data;
+      error = fallback.error;
+    }
 
     setLoading(false);
 
     if (error) {
       setMsg(error.message);
+      return;
+    }
+
+    if (!data) {
+      setMsg("Report was created, but Supabase did not return its id.");
       return;
     }
 
@@ -89,6 +108,16 @@ export default function NewReportPage() {
         </label>
 
         <label className="field">
+          <span className="label">Site name</span>
+          <input
+            className="input"
+            placeholder="North Plant"
+            value={siteName}
+            onChange={(e) => setSiteName(e.target.value)}
+          />
+        </label>
+
+        <label className="field">
           <span className="label">Start date</span>
           <input className="input" type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
         </label>
@@ -96,17 +125,6 @@ export default function NewReportPage() {
         <label className="field">
           <span className="label">End date</span>
           <input className="input" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-        </label>
-
-        <label className="field">
-          <span className="label">Key personnel (shown on export front page)</span>
-          <textarea
-            className="textarea"
-            value={keyPersonnel}
-            onChange={(e) => setKeyPersonnel(e.target.value)}
-            rows={4}
-            placeholder="Enter key personnel names/roles (one per line or comma separated)"
-          />
         </label>
 
         <button className="btn btn-primary" disabled={loading}>

@@ -2,7 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
-import type { AppRole } from "@/lib/roles";
+
+/**
+ * Types that match your Supabase schema
+ */
+export type AppRole = "contributor" | "supervisor" | "manager";
 
 export type Profile = {
   id: string;

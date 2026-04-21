@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
 import { useProfile } from "@/lib/useProfile";
@@ -27,30 +27,18 @@ type UpdateRow = {
 
 const ISSUE_PREFIX = "__ISSUE__:";
 const NEXT_SHUT_PREFIX = "__NEXT_SHUT__:";
-const EMERGENT_PREFIX = "__EMERGENT__:";
 
 function getEntryKind(comment: string | null): "issue" | "update" {
   if (!comment) return "update";
-  if (comment.startsWith(EMERGENT_PREFIX)) return "issue";
   if (comment.startsWith(ISSUE_PREFIX)) return "issue";
   return "update";
 }
 
 function stripEntryPrefix(comment: string | null): string | null {
   if (!comment) return null;
-  if (comment.startsWith(EMERGENT_PREFIX)) return null;
   if (comment.startsWith(ISSUE_PREFIX)) return comment.slice(ISSUE_PREFIX.length).trim() || null;
   if (comment.startsWith(NEXT_SHUT_PREFIX)) return comment.slice(NEXT_SHUT_PREFIX.length).trim() || null;
   return comment;
-}
-
-function splitBulletLines(text: string | null) {
-  return (text ?? "")
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => line.replace(/^[\-\*\u2022]\s*/, "").trim())
-    .filter(Boolean);
 }
 
 export default function WorkOrderDetailPage() {
@@ -81,8 +69,6 @@ export default function WorkOrderDetailPage() {
   const [editingIssueId, setEditingIssueId] = useState<string | null>(null);
   const [editingIssueComment, setEditingIssueComment] = useState("");
   const [savingIssueEditId, setSavingIssueEditId] = useState<string | null>(null);
-  const commentRef = useRef<HTMLTextAreaElement | null>(null);
-  const issuesRef = useRef<HTMLTextAreaElement | null>(null);
   const [deletingPhotoKey, setDeletingPhotoKey] = useState<string | null>(null);
   const maxPhotosPerWo = 6;
 
@@ -431,9 +417,7 @@ export default function WorkOrderDetailPage() {
   }
 
   const generalUpdates = updates.filter((u) => getEntryKind(u.comment) === "update");
-  const issueEntries = updates.filter(
-    (u) => getEntryKind(u.comment) === "issue" && !(u.comment?.startsWith(EMERGENT_PREFIX))
-  );
+  const issueEntries = updates.filter((u) => getEntryKind(u.comment) === "issue");
   const existingPhotoCount = updates.reduce((n, u) => n + (u.photo_urls?.length ?? 0), 0);
   const remainingPhotoSlots = Math.max(maxPhotosPerWo - existingPhotoCount, 0);
 
@@ -450,75 +434,6 @@ export default function WorkOrderDetailPage() {
     return [...current, ...accepted];
   }
 
-  function insertBullet(
-    ref: React.RefObject<HTMLTextAreaElement | null>,
-    currentValue: string,
-    setValue: (next: string) => void
-  ) {
-    const el = ref.current;
-    if (!el) {
-      setValue(`${currentValue}${currentValue.endsWith("\n") || currentValue.length === 0 ? "" : "\n"}• `);
-      return;
-    }
-
-    const start = el.selectionStart ?? currentValue.length;
-    const end = el.selectionEnd ?? currentValue.length;
-    const before = currentValue.slice(0, start);
-    const after = currentValue.slice(end);
-    const needsBreak = before.length > 0 && !before.endsWith("\n");
-    const insert = `${needsBreak ? "\n" : ""}• `;
-    const next = `${before}${insert}${after}`;
-    setValue(next);
-
-    queueMicrotask(() => {
-      const cursor = before.length + insert.length;
-      el.focus();
-      el.setSelectionRange(cursor, cursor);
-    });
-  }
-
-  function handleBulletEnter(
-    e: React.KeyboardEvent<HTMLTextAreaElement>,
-    ref: React.RefObject<HTMLTextAreaElement | null>,
-    currentValue: string,
-    setValue: (next: string) => void
-  ) {
-    if (e.key !== "Enter" || e.shiftKey) return;
-    e.preventDefault();
-    const el = ref.current;
-    if (!el) {
-      setValue(`${currentValue}\n• `.replace(/^\n/, "• "));
-      return;
-    }
-
-    const start = el.selectionStart ?? currentValue.length;
-    const end = el.selectionEnd ?? currentValue.length;
-    const lineStart = currentValue.lastIndexOf("\n", Math.max(start - 1, 0)) + 1;
-    const lineEndIdx = currentValue.indexOf("\n", start);
-    const lineEnd = lineEndIdx === -1 ? currentValue.length : lineEndIdx;
-    const currentLine = currentValue.slice(lineStart, lineEnd).trim();
-    if (currentLine === "•" || currentLine === "-") {
-      return;
-    }
-    const before = currentValue.slice(0, start);
-    const after = currentValue.slice(end);
-    const separator = before.length === 0 ? "" : "\n";
-    const next = `${before}${separator}• ${after}`;
-    setValue(next);
-
-    queueMicrotask(() => {
-      const cursor = before.length + separator.length + 2;
-      el.focus();
-      el.setSelectionRange(cursor, cursor);
-    });
-  }
-
-  function ensureLeadingBullet(value: string, setValue: (next: string) => void) {
-    const trimmed = value.trim();
-    if (!trimmed) return;
-    if (/^[\-\*\u2022]\s+/.test(value)) return;
-    setValue(`• ${value}`);
-  }
   function renderPhotoThumb(path: string, alt: string, updateId: string) {
     const isDeleting = deletingPhotoKey === `${updateId}:${path}`;
 
@@ -653,22 +568,14 @@ export default function WorkOrderDetailPage() {
       </div>
 
       <div className="section-card grid" style={{ gap: "0.75rem" }}>
-        <h3>Completion Comments</h3>
+        <h3>Comments</h3>
 
         <textarea
           className="textarea"
-          ref={commentRef}
           value={comment}
           onChange={(e) => setComment(e.target.value)}
-          onFocus={() => {
-            if (!comment.trim()) setComment("• ");
-          }}
-          onBlur={() => ensureLeadingBullet(comment, setComment)}
-          onKeyDown={(e) => handleBulletEnter(e, commentRef, comment, setComment)}
-          placeholder="Write completion comments..."
+          placeholder="Write a comment..."
           rows={4}
-          wrap="off"
-          style={{ paddingLeft: "0.8rem", overflowX: "auto" }}
         />
 
         <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", alignItems: "center" }}>
@@ -704,13 +611,6 @@ export default function WorkOrderDetailPage() {
 
           <span className="muted">Selected: {files.length}</span>
           <span className="muted">WO photos remaining: {remainingPhotoSlots}</span>
-          <button
-            type="button"
-            className="btn btn-soft"
-            onClick={() => insertBullet(commentRef, comment, setComment)}
-          >
-            Add bullet
-          </button>
         </div>
 
         <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
@@ -719,28 +619,20 @@ export default function WorkOrderDetailPage() {
             onClick={() => addEntry("update")}
             disabled={saving || (!comment.trim() && files.length === 0)}
           >
-            {saving ? "Saving..." : "Save completion comment"}
+            {saving ? "Saving..." : "Save comment"}
           </button>
           {msg ? <span className="muted">{msg}</span> : null}
         </div>
       </div>
 
       <div className="section-card grid" style={{ gap: "0.75rem" }}>
-        <h3>Issues/Recommendations</h3>
+        <h3>Issues</h3>
         <textarea
           className="textarea"
-          ref={issuesRef}
           value={issuesComment}
           onChange={(e) => setIssuesComment(e.target.value)}
-          onFocus={() => {
-            if (!issuesComment.trim()) setIssuesComment("• ");
-          }}
-          onBlur={() => ensureLeadingBullet(issuesComment, setIssuesComment)}
-          onKeyDown={(e) => handleBulletEnter(e, issuesRef, issuesComment, setIssuesComment)}
-          placeholder="Describe issue or recommendation..."
+          placeholder="Describe issue found..."
           rows={3}
-          wrap="off"
-          style={{ paddingLeft: "0.8rem", overflowX: "auto" }}
         />
         <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", alignItems: "center" }}>
           <label className="btn btn-soft" style={{ cursor: "pointer" }}>
@@ -772,13 +664,6 @@ export default function WorkOrderDetailPage() {
             />
           </label>
           <span className="muted">Selected: {issuesFiles.length}</span>
-          <button
-            type="button"
-            className="btn btn-soft"
-            onClick={() => insertBullet(issuesRef, issuesComment, setIssuesComment)}
-          >
-            Add bullet
-          </button>
         </div>
         <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
           <button
@@ -786,13 +671,13 @@ export default function WorkOrderDetailPage() {
             onClick={() => addEntry("issue")}
             disabled={savingIssues || (!issuesComment.trim() && issuesFiles.length === 0)}
           >
-            {savingIssues ? "Saving..." : "Save issue/recommendation"}
+            {savingIssues ? "Saving..." : "Save issue"}
           </button>
         </div>
       </div>
 
       <div className="grid">
-        <h3>Completion Comments</h3>
+        <h3>Comments</h3>
 
         {generalUpdates.map((u) => (
           <div key={u.id} className="section-card" style={{ padding: "0.85rem" }}>
@@ -831,13 +716,7 @@ export default function WorkOrderDetailPage() {
               </div>
             ) : (
               <>
-                {u.comment ? (
-                  <ul style={{ marginTop: "0.45rem", marginBottom: 0, paddingLeft: "1.2rem" }}>
-                    {splitBulletLines(stripEntryPrefix(u.comment)).map((line, idx) => (
-                      <li key={`${u.id}-comment-${idx}`}>{line}</li>
-                    ))}
-                  </ul>
-                ) : null}
+                {u.comment ? <div style={{ marginTop: "0.45rem" }}>{stripEntryPrefix(u.comment)}</div> : null}
                 {hasManagerAccess(profile?.role) && u.comment ? (
                   <div style={{ marginTop: "0.6rem" }}>
                     <button
@@ -864,11 +743,11 @@ export default function WorkOrderDetailPage() {
           </div>
         ))}
 
-        {generalUpdates.length === 0 ? <p className="muted">No completion comments yet. Add the first one above.</p> : null}
+        {generalUpdates.length === 0 ? <p className="muted">No comments yet. Add the first one above.</p> : null}
       </div>
 
       <div className="grid">
-        <h3>Logged Issues/Recommendations</h3>
+        <h3>Logged Issues</h3>
         {issueEntries.map((u) => (
           <div key={u.id} className="section-card" style={{ padding: "0.85rem" }}>
             <div className="muted" style={{ fontSize: "0.78rem" }}>
@@ -905,13 +784,7 @@ export default function WorkOrderDetailPage() {
               </div>
             ) : (
               <>
-                {u.comment ? (
-                  <ul style={{ marginTop: "0.45rem", marginBottom: 0, paddingLeft: "1.2rem" }}>
-                    {splitBulletLines(stripEntryPrefix(u.comment)).map((line, idx) => (
-                      <li key={`${u.id}-issue-${idx}`}>{line}</li>
-                    ))}
-                  </ul>
-                ) : null}
+                {u.comment ? <div style={{ marginTop: "0.45rem" }}>{stripEntryPrefix(u.comment)}</div> : null}
                 {hasManagerAccess(profile?.role) && u.comment ? (
                   <div style={{ marginTop: "0.6rem" }}>
                     <button
@@ -936,7 +809,7 @@ export default function WorkOrderDetailPage() {
             ) : null}
           </div>
         ))}
-        {issueEntries.length === 0 ? <p className="muted">No issues/recommendations logged yet.</p> : null}
+        {issueEntries.length === 0 ? <p className="muted">No issues logged yet.</p> : null}
       </div>
 
     </div>

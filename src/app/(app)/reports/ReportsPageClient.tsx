@@ -5,11 +5,11 @@ import { Suspense, useEffect, useState } from "react";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
 import { useProfile } from "@/lib/useProfile";
 import { useSearchParams } from "next/navigation";
-import { hasManagerAccess } from "@/lib/roles";
 
 type ReportRow = {
   id: string;
   name: string;
+  site_name: string | null;
   start_date: string | null;
   end_date: string | null;
   status: string;
@@ -23,6 +23,10 @@ function isArchivedReport(r: ReportRow) {
 
 function displayReportName(name: string) {
   return name.startsWith(ARCHIVE_PREFIX) ? name.slice(ARCHIVE_PREFIX.length).trim() : name;
+}
+
+function isMissingSiteNameColumn(error: { message?: string; code?: string } | null) {
+  return Boolean(error?.message?.includes("site_name") || error?.code === "PGRST204");
 }
 
 function ReportsPageContent() {
@@ -41,10 +45,20 @@ function ReportsPageContent() {
     setLoading(true);
     setErr(null);
 
-    const { data, error } = await supabase
+    let { data, error } = await supabase
       .from("reports")
-      .select("id, name, start_date, end_date, status, created_at")
+      .select("id, name, site_name, start_date, end_date, status, created_at")
       .order("created_at", { ascending: false });
+
+    if (isMissingSiteNameColumn(error)) {
+      const fallback = await supabase
+        .from("reports")
+        .select("id, name, start_date, end_date, status, created_at")
+        .order("created_at", { ascending: false });
+
+      data = fallback.data?.map((report) => ({ ...report, site_name: null })) ?? null;
+      error = fallback.error;
+    }
 
     if (error) setErr(error.message);
     else setReports((data ?? []) as ReportRow[]);
@@ -58,7 +72,7 @@ function ReportsPageContent() {
   }, [profileLoading]);
 
   async function archiveReport(reportId: string) {
-    if (!hasManagerAccess(profile?.role)) return;
+    if (profile?.role !== "manager") return;
 
     const ok = window.confirm("Archive this report? You can still open it later, but it will be marked archived.");
     if (!ok) return;
@@ -97,7 +111,7 @@ function ReportsPageContent() {
   }
 
   async function deleteReport(reportId: string) {
-    if (!hasManagerAccess(profile?.role)) return;
+    if (profile?.role !== "manager") return;
 
     const ok = window.confirm("Permanently delete this report and all its work orders/updates? This cannot be undone.");
     if (!ok) return;
@@ -199,18 +213,23 @@ function ReportsPageContent() {
               <p className="muted" style={{ margin: "0.5rem 0 0" }}>
                 {r.start_date ?? "?"} {"->"} {r.end_date ?? "?"}
               </p>
+              {r.site_name ? (
+                <p className="muted" style={{ margin: "0.35rem 0 0" }}>
+                  Site: {r.site_name}
+                </p>
+              ) : null}
 
               <div style={{ marginTop: "0.9rem", display: "flex", gap: "0.55rem", flexWrap: "wrap", alignItems: "center" }}>
                 <Link className="btn btn-soft" href={`/reports/${r.id}`}>
                   Open report
                 </Link>
                 <div style={{ marginLeft: "auto", display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
-                  {hasManagerAccess(profile?.role) && !isArchivedReport(r) ? (
+                  {profile?.role === "manager" && !isArchivedReport(r) ? (
                     <button className="btn btn-danger" disabled={archivingId === r.id} onClick={() => archiveReport(r.id)}>
                       {archivingId === r.id ? "Archiving..." : "Archive"}
                     </button>
                   ) : null}
-                  {hasManagerAccess(profile?.role) ? (
+                  {profile?.role === "manager" ? (
                     <button className="btn btn-danger" disabled={deletingId === r.id} onClick={() => deleteReport(r.id)}>
                       {deletingId === r.id ? "Deleting..." : "Delete"}
                     </button>

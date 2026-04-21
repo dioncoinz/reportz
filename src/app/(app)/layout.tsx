@@ -5,12 +5,6 @@ import { useProfile } from "@/lib/useProfile";
 import { useEffect } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
-import { canAccessUserAdmin } from "@/lib/roles";
-
-function formatRole(role: string | null | undefined) {
-  if (!role) return "";
-  return role.charAt(0).toUpperCase() + role.slice(1);
-}
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { loading, profile, userId } = useProfile();
@@ -42,7 +36,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
             <Link className="nav-link" href="/reports/new">
               New
             </Link>
-            {canAccessUserAdmin(profile?.role) ? (
+            {profile?.role === "manager" ? (
               <Link className="nav-link" href="/admin/users">
                 Admin
               </Link>
@@ -54,7 +48,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
               "Loading..."
             ) : profile ? (
               <>
-                {profile.full_name || "User"} | {formatRole(profile.role)}
+                {profile.full_name || "User"} | {profile.role} | tenant: {profile.tenant_id ? "set" : "NOT SET"}
                 {" | "}
                 <button className="btn btn-soft" onClick={logout}>
                   Logout

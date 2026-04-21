@@ -1,5 +1,6 @@
 import { createSupabaseServer } from "@/lib/supabase/server";
-import type { AppRole } from "@/lib/roles";
+
+export type AppRole = "contributor" | "supervisor" | "manager";
 
 export async function getCurrentProfile() {
   const supabase = await createSupabaseServer();

@@ -1,14 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
-import { requireEnv } from "@/lib/env";
-import type { AppRole } from "@/lib/roles";
-import { hasManagerAccess } from "@/lib/roles";
+
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+type Role = "contributor" | "supervisor" | "manager";
 
 export async function POST(req: NextRequest) {
-  const supabaseUrl = requireEnv("NEXT_PUBLIC_SUPABASE_URL");
-  const anonKey = requireEnv("NEXT_PUBLIC_SUPABASE_ANON_KEY");
-  const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
-
   const authHeader = req.headers.get("authorization");
   if (!authHeader) {
     return NextResponse.json({ error: "Missing authorization header." }, { status: 401 });
@@ -30,14 +29,14 @@ export async function POST(req: NextRequest) {
     .from("profiles")
     .select("tenant_id, role")
     .eq("id", user.id)
-    .single<{ tenant_id: string | null; role: AppRole }>();
+    .single<{ tenant_id: string | null; role: Role }>();
 
   if (profileErr || !profile?.tenant_id) {
     return NextResponse.json({ error: "Profile not found." }, { status: 403 });
   }
 
-  if (!hasManagerAccess(profile.role)) {
-    return NextResponse.json({ error: "Only managers and owners can delete reports." }, { status: 403 });
+  if (profile.role !== "manager") {
+    return NextResponse.json({ error: "Only managers can delete reports." }, { status: 403 });
   }
 
   const body = await req.json().catch(() => null);

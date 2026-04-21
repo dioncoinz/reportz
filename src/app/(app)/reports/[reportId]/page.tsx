@@ -5,21 +5,19 @@ import { useParams, useRouter } from "next/navigation";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
 import Link from "next/link";
 import { useProfile } from "@/lib/useProfile";
-import { canAccessExportSettings, canExportPowerPoint, hasManagerAccess } from "@/lib/roles";
+import { isExportOwner } from "@/lib/export-access";
 
 type ReportRow = {
   id: string;
   name: string;
+  site_name: string | null;
   start_date: string | null;
   end_date: string | null;
-  safety_injuries: number | null;
-  safety_incidents: number | null;
   status: string;
   created_at: string;
 };
 type WorkOrderStatusRow = {
   status: "open" | "complete" | "cancelled";
-  emergent_work: boolean;
 };
 const ARCHIVE_PREFIX = "[ARCHIVED] ";
 
@@ -31,27 +29,13 @@ function displayReportName(name: string) {
   return name.startsWith(ARCHIVE_PREFIX) ? name.slice(ARCHIVE_PREFIX.length).trim() : name;
 }
 
-function getErrorMessage(err: unknown) {
-  if (err && typeof err === "object" && "message" in err) {
-    const msg = (err as { message?: unknown }).message;
-    if (typeof msg === "string") return msg;
-  }
-  return "";
-}
-
-function isMissingColumnError(err: unknown, column: string) {
-  const msg = getErrorMessage(err).toLowerCase();
-  return (
-    msg.includes(column.toLowerCase()) &&
-    (msg.includes("does not exist") ||
-      msg.includes("could not find") ||
-      msg.includes("schema cache"))
-  );
+function isMissingSiteNameColumn(error: { message?: string; code?: string } | null) {
+  return Boolean(error?.message?.includes("site_name") || error?.code === "PGRST204");
 }
 
 export default function ReportDetailPage() {
   const supabase = createSupabaseBrowser();
-  const { profile } = useProfile();
+  const { profile, userId } = useProfile();
   const params = useParams<{ reportId: string }>();
   const router = useRouter();
 
@@ -62,12 +46,7 @@ export default function ReportDetailPage() {
   const [archiving, setArchiving] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [woProgress, setWoProgress] = useState<WorkOrderStatusRow[]>([]);
-  const [safetyInjuries, setSafetyInjuries] = useState("0");
-  const [safetyIncidents, setSafetyIncidents] = useState("0");
-  const [savingSafety, setSavingSafety] = useState(false);
-  const [safetyMsg, setSafetyMsg] = useState<string | null>(null);
-  const [hasSafetyInjuriesColumn, setHasSafetyInjuriesColumn] = useState(true);
-  const [hasSafetyIncidentsColumn, setHasSafetyIncidentsColumn] = useState(true);
+  const canManageExportTemplate = isExportOwner(userId);
 
   useEffect(() => {
     async function load() {
@@ -76,64 +55,35 @@ export default function ReportDetailPage() {
       setLoading(true);
       setErr(null);
 
-      const reportWithSafety = await supabase
+      let { data, error } = await supabase
         .from("reports")
-        .select("id, name, start_date, end_date, safety_injuries, safety_incidents, status, created_at")
+        .select("id, name, site_name, start_date, end_date, status, created_at")
         .eq("id", reportId)
         .single();
-      let data: ReportRow | null = null;
-      let error: { message: string } | null = null;
 
-      if (reportWithSafety.error) {
-        const missingInjuries = isMissingColumnError(reportWithSafety.error, "safety_injuries");
-        const missingIncidents = isMissingColumnError(reportWithSafety.error, "safety_incidents");
-        setHasSafetyInjuriesColumn(!missingInjuries);
-        setHasSafetyIncidentsColumn(!missingIncidents);
-        if (
-          missingInjuries ||
-          missingIncidents
-        ) {
-          const fallback = await supabase
-            .from("reports")
-            .select("id, name, start_date, end_date, status, created_at")
-            .eq("id", reportId)
-            .single<Omit<ReportRow, "safety_injuries" | "safety_incidents">>();
-          if (fallback.error || !fallback.data) {
-            error = { message: fallback.error?.message ?? "Report not found" };
-          } else {
-            data = { ...fallback.data, safety_injuries: 0, safety_incidents: 0 };
-          }
-        } else {
-          error = { message: reportWithSafety.error.message };
-        }
-      } else if (reportWithSafety.data) {
-        setHasSafetyInjuriesColumn(true);
-        setHasSafetyIncidentsColumn(true);
-        data = reportWithSafety.data as ReportRow;
-      }
-      const { data: sessionRes, error: sessionErr } = await supabase.auth.getSession();
-      const token = sessionRes.session?.access_token;
-      let woData: WorkOrderStatusRow[] = [];
-      if (!sessionErr && token) {
-        const woRes = await fetch(`/api/report-work-orders?reportId=${reportId}`, {
-          headers: { Authorization: `Bearer ${token}` },
-        });
-        const woJson = await woRes.json().catch(() => ({}));
-        if (woRes.ok) {
-          woData = ((woJson.workOrders ?? []) as Array<{ status: "open" | "complete" | "cancelled"; emergent_work: boolean }>)
-            .map((w) => ({ status: w.status, emergent_work: w.emergent_work }));
-        }
+      if (isMissingSiteNameColumn(error)) {
+        const fallback = await supabase
+          .from("reports")
+          .select("id, name, start_date, end_date, status, created_at")
+          .eq("id", reportId)
+          .single();
+
+        data = fallback.data ? { ...fallback.data, site_name: null } : null;
+        error = fallback.error;
       }
 
-      if (error || !data) {
-        setErr(error?.message ?? "Report not found.");
+      const { data: woData } = await supabase
+        .from("work_orders")
+        .select("status")
+        .eq("report_id", reportId);
+
+      if (error) {
+        setErr(error.message);
+      
         setReport(null);
       } else {
-        const typed = data as ReportRow;
-        setReport(typed);
-        setSafetyInjuries(String(Math.max(typed.safety_injuries ?? 0, 0)));
-        setSafetyIncidents(String(Math.max(typed.safety_incidents ?? 0, 0)));
-        setWoProgress(woData);
+        setReport(data as ReportRow);
+        setWoProgress((woData ?? []) as WorkOrderStatusRow[]);
       }
 
       setLoading(false);
@@ -143,7 +93,7 @@ export default function ReportDetailPage() {
   }, [reportId, supabase]);
 
   async function archiveCurrentReport() {
-    if (!report || !hasManagerAccess(profile?.role)) return;
+    if (!report || profile?.role !== "manager") return;
 
     const ok = window.confirm("Archive this report? You can still access it later.");
     if (!ok) return;
@@ -180,7 +130,7 @@ export default function ReportDetailPage() {
   }
 
   async function deleteCurrentReport() {
-    if (!report || !hasManagerAccess(profile?.role)) return;
+    if (!report || profile?.role !== "manager") return;
 
     const ok = window.confirm("Permanently delete this report and all related data? This cannot be undone.");
     if (!ok) return;
@@ -215,86 +165,35 @@ export default function ReportDetailPage() {
     router.push("/reports");
   }
 
-  async function saveSafetyCompliance() {
+  async function exportPowerPoint() {
     if (!report) return;
-    setSavingSafety(true);
-    setSafetyMsg(null);
 
-    const injuries = Math.max(Number.parseInt(safetyInjuries || "0", 10) || 0, 0);
-    const incidents = Math.max(Number.parseInt(safetyIncidents || "0", 10) || 0, 0);
-
-    if (!hasSafetyInjuriesColumn && !hasSafetyIncidentsColumn) {
-      setSavingSafety(false);
-      setReport({
-        ...report,
-        safety_injuries: injuries,
-        safety_incidents: incidents,
-      });
-      setSafetyMsg("Safety fields are not available in the current database schema yet, so this value could not be saved to Supabase.");
+    const { data: sessionRes } = await supabase.auth.getSession();
+    const token = sessionRes.session?.access_token;
+    if (!token) {
+      setErr("You are not signed in.");
       return;
     }
 
-    const desiredUpdate = {
-      safety_injuries: injuries,
-      safety_incidents: incidents,
-    };
-    const safeUpdate: Partial<typeof desiredUpdate> = {};
-    if (hasSafetyInjuriesColumn) safeUpdate.safety_injuries = injuries;
-    if (hasSafetyIncidentsColumn) safeUpdate.safety_incidents = incidents;
+    const res = await fetch(`/api/export-report?reportId=${report.id}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
 
-    const { error } = await supabase
-      .from("reports")
-      .update(safeUpdate)
-      .eq("id", report.id);
-
-    if (error) {
-      const missingInjuries = isMissingColumnError(error, "safety_injuries");
-      const missingIncidents = isMissingColumnError(error, "safety_incidents");
-
-      if (missingInjuries || missingIncidents) {
-        const fallbackUpdate: Partial<typeof desiredUpdate> = {};
-        if (!missingInjuries) fallbackUpdate.safety_injuries = injuries;
-        if (!missingIncidents) fallbackUpdate.safety_incidents = incidents;
-
-        if (Object.keys(fallbackUpdate).length > 0) {
-          const { error: fallbackError } = await supabase
-            .from("reports")
-            .update(fallbackUpdate)
-            .eq("id", report.id);
-
-          setSavingSafety(false);
-          if (fallbackError) {
-            setSafetyMsg(`Save failed: ${fallbackError.message}`);
-            return;
-          }
-
-          setReport({
-            ...report,
-            safety_injuries: missingInjuries ? report.safety_injuries : injuries,
-            safety_incidents: missingIncidents ? report.safety_incidents : incidents,
-          });
-          setSafetyMsg("Safety compliance saved, but some fields could not be stored until the database schema is updated.");
-          return;
-        }
-
-        setSavingSafety(false);
-        setReport({
-          ...report,
-          safety_injuries: injuries,
-          safety_incidents: incidents,
-        });
-        setSafetyMsg("Safety fields are not available in the current database schema yet, so this value could not be saved to Supabase.");
-        return;
-      }
-
-      setSavingSafety(false);
-      setSafetyMsg(`Save failed: ${error.message}`);
+    if (!res.ok) {
+      const json = await res.json().catch(() => ({}));
+      setErr(json.error ?? "Export failed.");
       return;
     }
 
-    setSavingSafety(false);
-    setReport({ ...report, safety_injuries: injuries, safety_incidents: incidents });
-    setSafetyMsg("Safety compliance saved");
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${displayReportName(report.name)}.pptx`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
   }
 
   if (!reportId) return <p className="muted">Missing report id.</p>;
@@ -341,7 +240,6 @@ export default function ReportDetailPage() {
   const total = woProgress.length;
   const completed = woProgress.filter((w) => w.status === "complete").length;
   const cancelled = woProgress.filter((w) => w.status === "cancelled").length;
-  const emergent = woProgress.filter((w) => w.emergent_work).length;
   const open = total - completed - cancelled;
   const pct = total === 0 ? 0 : Math.round((completed / total) * 100);
 
@@ -354,6 +252,7 @@ export default function ReportDetailPage() {
             <div className="muted">
               Dates: {report.start_date ?? "?"} {"->"} {report.end_date ?? "?"}
             </div>
+            {report.site_name ? <div className="muted">Site: {report.site_name}</div> : null}
           </div>
 
           <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
@@ -371,25 +270,20 @@ export default function ReportDetailPage() {
           <Link className="btn btn-soft" href={`/reports/${report.id}/work-orders`}>
             Work Orders
           </Link>
-          {canAccessExportSettings(profile?.role) ? (
+          {canManageExportTemplate ? (
             <Link className="btn btn-soft" href={`/reports/${report.id}/exports`}>
               Exports
             </Link>
           ) : null}
-          {canExportPowerPoint(profile?.role) ? (
-            <button
-              className="btn"
-              onClick={() => window.open(`/api/export-report?reportId=${report.id}`, "_blank")}
-            >
-              Export PowerPoint
-            </button>
-          ) : null}
-          {hasManagerAccess(profile?.role) && !isArchivedReport(report) ? (
+          <button className="btn" onClick={exportPowerPoint}>
+            Export PowerPoint
+          </button>
+          {profile?.role === "manager" && !isArchivedReport(report) ? (
             <button className="btn btn-danger" onClick={archiveCurrentReport} disabled={archiving}>
               {archiving ? "Archiving..." : "Archive report"}
             </button>
           ) : null}
-          {hasManagerAccess(profile?.role) ? (
+          {profile?.role === "manager" ? (
             <button className="btn btn-danger" onClick={deleteCurrentReport} disabled={deleting}>
               {deleting ? "Deleting..." : "Delete report"}
             </button>
@@ -398,7 +292,7 @@ export default function ReportDetailPage() {
 
         <div className="title-row" style={{ alignItems: "center" }}>
           <div className="muted" style={{ fontSize: "0.9rem" }}>
-            {completed} complete | {open} open | {cancelled} cancelled | {emergent} emergent | {total} total
+            {completed} complete | {open} open | {cancelled} cancelled | {total} total
           </div>
           <div className="muted" style={{ fontSize: "0.9rem", fontWeight: 600 }}>
             {pct}% complete
@@ -411,37 +305,6 @@ export default function ReportDetailPage() {
       </div>
 
       <div className="section-card muted">Track imports, updates, and exports for this shutdown report.</div>
-      <div className="section-card grid" style={{ gap: "0.65rem" }}>
-        <h3>Safety Compliance</h3>
-        <div style={{ display: "grid", gap: "0.6rem", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))" }}>
-          <label className="field">
-            <span className="label">Injuries</span>
-            <input
-              className="input"
-              type="number"
-              min={0}
-              value={safetyInjuries}
-              onChange={(e) => setSafetyInjuries(e.target.value)}
-            />
-          </label>
-          <label className="field">
-            <span className="label">Incidents</span>
-            <input
-              className="input"
-              type="number"
-              min={0}
-              value={safetyIncidents}
-              onChange={(e) => setSafetyIncidents(e.target.value)}
-            />
-          </label>
-        </div>
-        <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
-          <button className="btn btn-primary" onClick={saveSafetyCompliance} disabled={savingSafety}>
-            {savingSafety ? "Saving..." : "Save safety compliance"}
-          </button>
-          {safetyMsg ? <span className={safetyMsg.toLowerCase().includes("failed") ? "error-text" : "muted"}>{safetyMsg}</span> : null}
-        </div>
-      </div>
     </div>
   );
 }
