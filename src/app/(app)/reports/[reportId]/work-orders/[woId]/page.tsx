@@ -69,6 +69,10 @@ export default function WorkOrderDetailPage() {
   const [editingIssueComment, setEditingIssueComment] = useState("");
   const [savingIssueEditId, setSavingIssueEditId] = useState<string | null>(null);
   const [deletingPhotoKey, setDeletingPhotoKey] = useState<string | null>(null);
+  const [editingHeader, setEditingHeader] = useState(false);
+  const [savingHeader, setSavingHeader] = useState(false);
+  const [woNumber, setWoNumber] = useState("");
+  const [woTitle, setWoTitle] = useState("");
   const maxPhotosPerWo = 6;
 
   async function load() {
@@ -96,6 +100,8 @@ export default function WorkOrderDetailPage() {
     if (updErr) setErr(updErr.message);
 
     setWo(woData as WorkOrder);
+    setWoNumber(String(woData.wo_number ?? ""));
+    setWoTitle(String(woData.title ?? ""));
     setCancelReason(woData.cancelled_reason ?? "");
     setUpdates((updData ?? []) as UpdateRow[]);
     setLoading(false);
@@ -195,6 +201,60 @@ export default function WorkOrderDetailPage() {
 
     setWo({ ...wo, cancelled_reason: reason });
     setMsg("Reason saved");
+  }
+
+  async function saveHeaderDetails() {
+    if (!wo || !hasManagerAccess(profile?.role)) {
+      setErr("Only managers and owners can edit work order details.");
+      return;
+    }
+
+    const cleanedWoNumber = woNumber.trim();
+    if (!cleanedWoNumber) {
+      setErr("WO number is required.");
+      return;
+    }
+
+    setErr(null);
+    setMsg(null);
+    setSavingHeader(true);
+
+    const { data: sessionRes, error: sessionErr } = await supabase.auth.getSession();
+    const token = sessionRes.session?.access_token;
+    if (sessionErr || !token) {
+      setSavingHeader(false);
+      setErr("You must be signed in to edit work order details.");
+      return;
+    }
+
+    const res = await fetch("/api/update-work-order-details", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        workOrderId: wo.id,
+        woNumber: cleanedWoNumber,
+        title: woTitle,
+      }),
+    });
+
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setSavingHeader(false);
+      setErr(typeof json?.error === "string" ? json.error : "Failed to update work order details.");
+      return;
+    }
+
+    setWo({
+      ...wo,
+      wo_number: cleanedWoNumber,
+      title: woTitle.trim(),
+    });
+    setEditingHeader(false);
+    setSavingHeader(false);
+    setMsg("Work order details updated");
   }
 
   async function addEntry(kind: "update" | "issue") {
@@ -496,9 +556,43 @@ export default function WorkOrderDetailPage() {
 
       <div className="section-card grid" style={{ gap: "0.75rem" }}>
         <div className="title-row">
-          <h1>
-            {wo.wo_number} - {wo.title}
-          </h1>
+          <div className="grid" style={{ gap: "0.55rem" }}>
+            {editingHeader ? (
+              <div className="grid" style={{ gap: "0.55rem" }}>
+                <input className="input" value={woNumber} onChange={(e) => setWoNumber(e.target.value)} />
+                <input className="input" value={woTitle} onChange={(e) => setWoTitle(e.target.value)} />
+                <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
+                  <button className="btn btn-primary" onClick={saveHeaderDetails} disabled={savingHeader}>
+                    {savingHeader ? "Saving..." : "Save WO text"}
+                  </button>
+                  <button
+                    className="btn btn-soft"
+                    onClick={() => {
+                      setEditingHeader(false);
+                      setWoNumber(wo.wo_number);
+                      setWoTitle(wo.title);
+                    }}
+                    disabled={savingHeader}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <h1>
+                  {wo.wo_number} - {wo.title}
+                </h1>
+                {hasManagerAccess(profile?.role) ? (
+                  <div>
+                    <button className="btn btn-soft" onClick={() => setEditingHeader(true)}>
+                      Edit WO text
+                    </button>
+                  </div>
+                ) : null}
+              </>
+            )}
+          </div>
           <span className={`status ${statusClass}`}>{wo.status}</span>
         </div>
 
