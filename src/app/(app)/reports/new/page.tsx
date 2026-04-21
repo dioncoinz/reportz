@@ -15,10 +15,6 @@ export default function NewReportPage() {
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  function isMissingColumn(error: { message?: string; code?: string } | null, column: string) {
-    return Boolean(error?.message?.includes(column) || error?.code === "PGRST204");
-  }
-
   async function createReport(e: React.FormEvent) {
     e.preventDefault();
     setLoading(true);
@@ -44,64 +40,40 @@ export default function NewReportPage() {
       return;
     }
 
-    const baseReport = {
-      tenant_id: profile.tenant_id,
-      name: [
-        [clientName.trim(), siteName.trim()].filter(Boolean).join(" - "),
-        name.trim(),
-      ].filter(Boolean).join(" "),
-      start_date: startDate || null,
-      end_date: endDate || null,
-      created_by: user.id,
-      status: "draft",
-    };
-
-    const optionalReportFields = {
-      client_name: clientName.trim() || null,
-      site_name: siteName.trim() || null,
-      shutdown_name: name.trim() || null,
-      vendor_key_contacts: vendorKeyContacts.trim() || null,
-      client_key_contacts: clientKeyContacts.trim() || null,
-      key_personnel: [vendorKeyContacts.trim(), clientKeyContacts.trim()].filter(Boolean).join("\n") || null,
-    };
-    let insertPayload: Record<string, string | null> = optionalReportFields;
-    let data: { id: string } | null = null;
-    let error: { message?: string; code?: string } | null = null;
-
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const result = await supabase
-        .from("reports")
-        .insert({
-          ...baseReport,
-          ...insertPayload,
-        })
-        .select("id")
-        .single();
-
-      data = result.data;
-      error = result.error;
-
-      if (!error) break;
-
-      const nextPayload = { ...insertPayload };
-      if (isMissingColumn(error, "client_name")) delete nextPayload.client_name;
-      if (isMissingColumn(error, "site_name")) delete nextPayload.site_name;
-      if (isMissingColumn(error, "shutdown_name")) delete nextPayload.shutdown_name;
-      if (isMissingColumn(error, "vendor_key_contacts")) delete nextPayload.vendor_key_contacts;
-      if (isMissingColumn(error, "client_key_contacts")) delete nextPayload.client_key_contacts;
-      if (isMissingColumn(error, "key_personnel")) delete nextPayload.key_personnel;
-      if (Object.keys(nextPayload).length === Object.keys(insertPayload).length) break;
-      insertPayload = nextPayload;
-    }
-
-    setLoading(false);
-
-    if (error) {
-      setMsg(error.message ?? "Failed to create report.");
+    const { data: sessionRes } = await supabase.auth.getSession();
+    const token = sessionRes.session?.access_token;
+    if (!token) {
+      setLoading(false);
+      setMsg("Not signed in.");
       return;
     }
 
-    if (!data) {
+    const res = await fetch("/api/create-report", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        clientName,
+        siteName,
+        shutdownName: name,
+        startDate,
+        endDate,
+        vendorKeyContacts,
+        clientKeyContacts,
+      }),
+    });
+    const data = (await res.json().catch(() => ({}))) as { id?: string; error?: string };
+
+    setLoading(false);
+
+    if (!res.ok) {
+      setMsg(data.error ?? "Failed to create report.");
+      return;
+    }
+
+    if (!data.id) {
       setMsg("Report was created, but Supabase did not return its id.");
       return;
     }
