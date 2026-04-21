@@ -389,7 +389,14 @@ export async function GET(req: NextRequest) {
     slide.background = { color: "F6F7FB" };
     slide.addShape(pptx.ShapeType.rect, { x: 0, y: 0, w: 13.333, h: 0.35, fill: { color: accent }, line: { color: accent } });
     if (logoData) {
-      slide.addImage({ data: logoData, x: 0.6, y: 0.55, w: 2.2, h: 0.8 });
+      slide.addImage({
+        data: logoData,
+        x: 0.6,
+        y: 0.55,
+        w: 2.2,
+        h: 0.8,
+        sizing: { type: "contain", w: 2.2, h: 0.8 },
+      });
     }
     slide.addText(company, {
       x: 0.6,
