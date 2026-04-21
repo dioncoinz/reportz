@@ -10,11 +10,12 @@ export default function NewReportPage() {
   const [name, setName] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
+  const [keyPersonnel, setKeyPersonnel] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  function isMissingSiteNameColumn(error: { message?: string; code?: string } | null) {
-    return Boolean(error?.message?.includes("site_name") || error?.code === "PGRST204");
+  function isMissingColumn(error: { message?: string; code?: string } | null, column: string) {
+    return Boolean(error?.message?.includes(column) || error?.code === "PGRST204");
   }
 
   async function createReport(e: React.FormEvent) {
@@ -51,25 +52,40 @@ export default function NewReportPage() {
       status: "draft",
     };
 
-    let { data, error } = await supabase
-      .from("reports")
-      .insert({
-        ...baseReport,
-        site_name: siteName.trim() || null,
-      })
-      .select("id")
-      .single();
+    const optionalReportFields = {
+      site_name: siteName.trim() || null,
+      key_personnel: keyPersonnel.trim() || null,
+    };
+    let insertPayload: Record<string, string | null> = optionalReportFields;
+    let data: { id: string } | null = null;
+    let error: { message?: string; code?: string } | null = null;
 
-    if (isMissingSiteNameColumn(error)) {
-      const fallback = await supabase.from("reports").insert(baseReport).select("id").single();
-      data = fallback.data;
-      error = fallback.error;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const result = await supabase
+        .from("reports")
+        .insert({
+          ...baseReport,
+          ...insertPayload,
+        })
+        .select("id")
+        .single();
+
+      data = result.data;
+      error = result.error;
+
+      if (!error) break;
+
+      const nextPayload = { ...insertPayload };
+      if (isMissingColumn(error, "site_name")) delete nextPayload.site_name;
+      if (isMissingColumn(error, "key_personnel")) delete nextPayload.key_personnel;
+      if (Object.keys(nextPayload).length === Object.keys(insertPayload).length) break;
+      insertPayload = nextPayload;
     }
 
     setLoading(false);
 
     if (error) {
-      setMsg(error.message);
+      setMsg(error.message ?? "Failed to create report.");
       return;
     }
 
@@ -125,6 +141,17 @@ export default function NewReportPage() {
         <label className="field">
           <span className="label">End date</span>
           <input className="input" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
+        </label>
+
+        <label className="field">
+          <span className="label">Key personnel (shown on export front page)</span>
+          <textarea
+            className="textarea"
+            value={keyPersonnel}
+            onChange={(e) => setKeyPersonnel(e.target.value)}
+            rows={4}
+            placeholder="Enter key personnel names/roles (one per line or comma separated)"
+          />
         </label>
 
         <button className="btn btn-primary" disabled={loading}>
