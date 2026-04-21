@@ -62,7 +62,6 @@ export default function WorkOrderDetailPage() {
   const [cancelReason, setCancelReason] = useState("");
   const [showCancelPrompt, setShowCancelPrompt] = useState(false);
   const [issuesComment, setIssuesComment] = useState("");
-  const [issuesFiles, setIssuesFiles] = useState<File[]>([]);
   const [editingUpdateId, setEditingUpdateId] = useState<string | null>(null);
   const [editingComment, setEditingComment] = useState("");
   const [savingEditId, setSavingEditId] = useState<string | null>(null);
@@ -218,7 +217,7 @@ export default function WorkOrderDetailPage() {
       return;
     }
 
-    const chosenFiles = isUpdate ? files : issuesFiles;
+    const chosenFiles = isUpdate ? files : [];
     const rawComment = isUpdate ? comment : issuesComment;
     const photoPaths: string[] = [];
     const existingPhotoCount = updates.reduce((n, u) => n + (u.photo_urls?.length ?? 0), 0);
@@ -271,7 +270,6 @@ export default function WorkOrderDetailPage() {
       setFiles([]);
     } else {
       setIssuesComment("");
-      setIssuesFiles([]);
     }
 
     setMsg(isUpdate ? "Update added" : "Issue saved");
@@ -634,42 +632,11 @@ export default function WorkOrderDetailPage() {
           placeholder="Describe issue found..."
           rows={3}
         />
-        <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", alignItems: "center" }}>
-          <label className="btn btn-soft" style={{ cursor: "pointer" }}>
-            Take photo
-            <input
-              type="file"
-              accept="image/*"
-              capture="environment"
-              style={{ display: "none" }}
-              onChange={(e) => {
-                const picked = Array.from(e.target.files ?? []);
-                if (picked.length) setIssuesFiles((prev) => addFilesWithLimit(prev, picked));
-                e.currentTarget.value = "";
-              }}
-            />
-          </label>
-          <label className="btn btn-soft" style={{ cursor: "pointer" }}>
-            Add photos
-            <input
-              type="file"
-              multiple
-              accept="image/*"
-              style={{ display: "none" }}
-              onChange={(e) => {
-                const picked = Array.from(e.target.files ?? []);
-                if (picked.length) setIssuesFiles((prev) => addFilesWithLimit(prev, picked));
-                e.currentTarget.value = "";
-              }}
-            />
-          </label>
-          <span className="muted">Selected: {issuesFiles.length}</span>
-        </div>
         <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
           <button
             className="btn btn-primary"
             onClick={() => addEntry("issue")}
-            disabled={savingIssues || (!issuesComment.trim() && issuesFiles.length === 0)}
+            disabled={savingIssues || !issuesComment.trim()}
           >
             {savingIssues ? "Saving..." : "Save issue"}
           </button>
