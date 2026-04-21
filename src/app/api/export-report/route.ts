@@ -9,6 +9,9 @@ type ReportRow = {
   id: string;
   tenant_id: string;
   name: string;
+  client_name: string | null;
+  site_name: string | null;
+  shutdown_name: string | null;
   start_date: string | null;
   end_date: string | null;
   key_personnel: string | null;
@@ -167,6 +170,36 @@ function contactText(value: string | null | undefined) {
     .join("\n");
 }
 
+function titleParts(report: ReportRow) {
+  const client = report.client_name?.trim();
+  const site = report.site_name?.trim();
+  const shutdown = report.shutdown_name?.trim();
+
+  if (client || shutdown) {
+    return {
+      clientSite: [client, site].filter(Boolean).join(" - ") || report.name,
+      shutdown: shutdown || "",
+    };
+  }
+
+  if (site) {
+    const normalized = report.name.replace(/\s+/g, " ").trim();
+    const siteIndex = normalized.toLowerCase().indexOf(site.toLowerCase());
+    if (siteIndex >= 0) {
+      const siteEnd = siteIndex + site.length;
+      return {
+        clientSite: normalized.slice(0, siteEnd).trim(),
+        shutdown: normalized.slice(siteEnd).trim(),
+      };
+    }
+  }
+
+  return {
+    clientSite: report.name,
+    shutdown: "",
+  };
+}
+
 function asBulletRuns(rows: UpdateRow[]) {
   return rows.slice(0, 2).map((u, index, arr) => ({
     text: cleanComment(u.comment) || "No comment",
@@ -207,7 +240,14 @@ export async function GET(req: NextRequest) {
   const id = req.nextUrl.searchParams.get("reportId");
   if (!id) return NextResponse.json({ error: "Missing reportId" }, { status: 400 });
 
-  const optionalReportColumns = ["key_personnel", "vendor_key_contacts", "client_key_contacts"] as const;
+  const optionalReportColumns = [
+    "client_name",
+    "site_name",
+    "shutdown_name",
+    "key_personnel",
+    "vendor_key_contacts",
+    "client_key_contacts",
+  ] as const;
   const missingReportColumns = new Set<(typeof optionalReportColumns)[number]>();
   let report: ReportRow | null = null;
   let reportErr: { message?: string; code?: string } | null = null;
@@ -217,6 +257,9 @@ export async function GET(req: NextRequest) {
       "id",
       "tenant_id",
       "name",
+      missingReportColumns.has("client_name") ? null : "client_name",
+      missingReportColumns.has("site_name") ? null : "site_name",
+      missingReportColumns.has("shutdown_name") ? null : "shutdown_name",
       "start_date",
       "end_date",
       missingReportColumns.has("key_personnel") ? null : "key_personnel",
@@ -236,6 +279,9 @@ export async function GET(req: NextRequest) {
     report = result.data
       ? {
           ...result.data,
+          client_name: result.data.client_name ?? null,
+          site_name: result.data.site_name ?? null,
+          shutdown_name: result.data.shutdown_name ?? null,
           key_personnel: result.data.key_personnel ?? null,
           vendor_key_contacts: result.data.vendor_key_contacts ?? null,
           client_key_contacts: result.data.client_key_contacts ?? null,
@@ -313,6 +359,7 @@ export async function GET(req: NextRequest) {
   const company = branding?.company_name ?? "Reportz";
   const vendorContacts = contactText(report.vendor_key_contacts || report.key_personnel);
   const clientContacts = contactText(report.client_key_contacts);
+  const title = titleParts(report);
 
   let logoData: string | null = null;
   if (branding?.logo_path) {
@@ -333,8 +380,8 @@ export async function GET(req: NextRequest) {
   pptx.layout = "LAYOUT_WIDE";
   pptx.author = "Reportz";
   pptx.company = company;
-  pptx.subject = `Shutdown report: ${report.name}`;
-  pptx.title = `${report.name} - Shutdown Report`;
+  pptx.subject = `Shutdown report: ${title.clientSite}`;
+  pptx.title = `${title.clientSite} - Shutdown Report`;
 
   // Slide 1: Title
   {
@@ -364,16 +411,28 @@ export async function GET(req: NextRequest) {
       bold: true,
       color: "0F172A",
     });
-    slide.addText(report.name, {
+    slide.addText(title.clientSite, {
       x: 0.6,
       y: 3.05,
       w: 12,
-      h: 0.9,
+      h: 0.45,
       fontFace: "Aptos",
       fontSize: 28,
       bold: true,
       color: "0F172A",
     });
+    if (title.shutdown) {
+      slide.addText(title.shutdown, {
+        x: 0.6,
+        y: 3.82,
+        w: 12,
+        h: 0.32,
+        fontFace: "Aptos",
+        fontSize: 16,
+        bold: true,
+        color: "334155",
+      });
+    }
     slide.addShape(pptx.ShapeType.roundRect, {
       x: 0.6,
       y: 4.35,

@@ -6,6 +6,7 @@ import { createSupabaseBrowser } from "@/lib/supabase/client";
 export default function NewReportPage() {
   const supabase = createSupabaseBrowser();
   const [clientName, setClientName] = useState("");
+  const [siteName, setSiteName] = useState("");
   const [name, setName] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -45,7 +46,10 @@ export default function NewReportPage() {
 
     const baseReport = {
       tenant_id: profile.tenant_id,
-      name: `${clientName.trim()} ${name.trim()}`.trim(),
+      name: [
+        [clientName.trim(), siteName.trim()].filter(Boolean).join(" - "),
+        name.trim(),
+      ].filter(Boolean).join(" "),
       start_date: startDate || null,
       end_date: endDate || null,
       created_by: user.id,
@@ -53,6 +57,9 @@ export default function NewReportPage() {
     };
 
     const optionalReportFields = {
+      client_name: clientName.trim() || null,
+      site_name: siteName.trim() || null,
+      shutdown_name: name.trim() || null,
       vendor_key_contacts: vendorKeyContacts.trim() || null,
       client_key_contacts: clientKeyContacts.trim() || null,
       key_personnel: [vendorKeyContacts.trim(), clientKeyContacts.trim()].filter(Boolean).join("\n") || null,
@@ -77,6 +84,9 @@ export default function NewReportPage() {
       if (!error) break;
 
       const nextPayload = { ...insertPayload };
+      if (isMissingColumn(error, "client_name")) delete nextPayload.client_name;
+      if (isMissingColumn(error, "site_name")) delete nextPayload.site_name;
+      if (isMissingColumn(error, "shutdown_name")) delete nextPayload.shutdown_name;
       if (isMissingColumn(error, "vendor_key_contacts")) delete nextPayload.vendor_key_contacts;
       if (isMissingColumn(error, "client_key_contacts")) delete nextPayload.client_key_contacts;
       if (isMissingColumn(error, "key_personnel")) delete nextPayload.key_personnel;
@@ -122,6 +132,16 @@ export default function NewReportPage() {
             value={name}
             onChange={(e) => setName(e.target.value)}
             required
+          />
+        </label>
+
+        <label className="field">
+          <span className="label">Site name</span>
+          <input
+            className="input"
+            placeholder="North Plant"
+            value={siteName}
+            onChange={(e) => setSiteName(e.target.value)}
           />
         </label>
 
