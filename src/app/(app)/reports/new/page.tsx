@@ -10,7 +10,8 @@ export default function NewReportPage() {
   const [name, setName] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
-  const [keyPersonnel, setKeyPersonnel] = useState("");
+  const [vendorKeyContacts, setVendorKeyContacts] = useState("");
+  const [clientKeyContacts, setClientKeyContacts] = useState("");
   const [msg, setMsg] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
@@ -54,7 +55,9 @@ export default function NewReportPage() {
 
     const optionalReportFields = {
       site_name: siteName.trim() || null,
-      key_personnel: keyPersonnel.trim() || null,
+      vendor_key_contacts: vendorKeyContacts.trim() || null,
+      client_key_contacts: clientKeyContacts.trim() || null,
+      key_personnel: [vendorKeyContacts.trim(), clientKeyContacts.trim()].filter(Boolean).join("\n") || null,
     };
     let insertPayload: Record<string, string | null> = optionalReportFields;
     let data: { id: string } | null = null;
@@ -77,6 +80,8 @@ export default function NewReportPage() {
 
       const nextPayload = { ...insertPayload };
       if (isMissingColumn(error, "site_name")) delete nextPayload.site_name;
+      if (isMissingColumn(error, "vendor_key_contacts")) delete nextPayload.vendor_key_contacts;
+      if (isMissingColumn(error, "client_key_contacts")) delete nextPayload.client_key_contacts;
       if (isMissingColumn(error, "key_personnel")) delete nextPayload.key_personnel;
       if (Object.keys(nextPayload).length === Object.keys(insertPayload).length) break;
       insertPayload = nextPayload;
@@ -143,16 +148,29 @@ export default function NewReportPage() {
           <input className="input" type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
         </label>
 
-        <label className="field">
-          <span className="label">Key personnel (shown on export front page)</span>
-          <textarea
-            className="textarea"
-            value={keyPersonnel}
-            onChange={(e) => setKeyPersonnel(e.target.value)}
-            rows={4}
-            placeholder="Enter key personnel names/roles (one per line or comma separated)"
-          />
-        </label>
+        <div style={{ display: "grid", gap: "0.75rem", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))" }}>
+          <label className="field">
+            <span className="label">Vendor key contacts</span>
+            <textarea
+              className="textarea"
+              value={vendorKeyContacts}
+              onChange={(e) => setVendorKeyContacts(e.target.value)}
+              rows={4}
+              placeholder="Enter vendor names/roles, one per line"
+            />
+          </label>
+
+          <label className="field">
+            <span className="label">Client key contacts</span>
+            <textarea
+              className="textarea"
+              value={clientKeyContacts}
+              onChange={(e) => setClientKeyContacts(e.target.value)}
+              rows={4}
+              placeholder="Enter client names/roles, one per line"
+            />
+          </label>
+        </div>
 
         <button className="btn btn-primary" disabled={loading}>
           {loading ? "Creating..." : "Create report"}
