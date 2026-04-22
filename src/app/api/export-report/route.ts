@@ -49,6 +49,7 @@ type UpdateRow = {
 
 const ISSUE_PREFIX = "__ISSUE__:";
 const NEXT_SHUT_PREFIX = "__NEXT_SHUT__:";
+const EMERGENT_PREFIX = "__EMERGENT__:";
 const MAX_PHOTOS_PER_WORK_ORDER = 6;
 const PHOTO_MAX_WIDTH = 1600;
 const PHOTO_MAX_HEIGHT = 1200;
@@ -148,10 +149,11 @@ function statusColor(status: WorkOrderRow["status"]) {
   return "B67710";
 }
 
-function getEntryKind(comment: string | null): "comments" | "issues" | "next" {
+function getEntryKind(comment: string | null): "comments" | "issues" | "next" | "emergent" {
   if (!comment) return "comments";
   if (comment.startsWith(ISSUE_PREFIX)) return "issues";
   if (comment.startsWith(NEXT_SHUT_PREFIX)) return "next";
+  if (comment.startsWith(EMERGENT_PREFIX)) return "emergent";
   return "comments";
 }
 
@@ -159,6 +161,7 @@ function cleanComment(comment: string | null) {
   if (!comment) return "";
   if (comment.startsWith(ISSUE_PREFIX)) return comment.slice(ISSUE_PREFIX.length).trim();
   if (comment.startsWith(NEXT_SHUT_PREFIX)) return comment.slice(NEXT_SHUT_PREFIX.length).trim();
+  if (comment.startsWith(EMERGENT_PREFIX)) return "";
   return comment.trim();
 }
 
