@@ -162,12 +162,11 @@ function cleanComment(comment: string | null) {
   return comment.trim();
 }
 
-function contactText(value: string | null | undefined) {
+function contactLines(value: string | null | undefined) {
   return (value ?? "")
     .split(/\r?\n|,/)
     .map((line) => line.trim())
-    .filter(Boolean)
-    .join("\n");
+    .filter(Boolean);
 }
 
 function titleParts(report: ReportRow) {
@@ -362,8 +361,8 @@ export async function GET(req: NextRequest) {
 
   const accent = normalizeHex(branding?.accent_hex, "C7662D");
   const company = branding?.company_name ?? "Reportz";
-  const vendorContacts = contactText(report.vendor_key_contacts || report.key_personnel);
-  const clientContacts = contactText(report.client_key_contacts);
+  const vendorLines = contactLines(report.vendor_key_contacts || report.key_personnel);
+  const clientLines = contactLines(report.client_key_contacts);
   const title = titleParts(report);
 
   let logoData: string | null = null;
@@ -471,19 +470,20 @@ export async function GET(req: NextRequest) {
       line: { color: "D8DEEA", pt: 1 },
     });
     slide.addText("Key Personnel", {
-      x: 8.1,
-      y: 4.52,
-      w: 4.3,
-      h: 0.25,
+      x: 8.03,
+      y: 4.48,
+      w: 4.46,
+      h: 0.22,
       fontFace: "Aptos",
-      fontSize: 11,
+      fontSize: 10,
       bold: true,
       color: "64748B",
+      align: "center",
     });
     slide.addText("Vendor", {
-      x: 8.1,
-      y: 4.78,
-      w: 2,
+      x: 8.22,
+      y: 4.9,
+      w: 0.7,
       h: 0.18,
       fontFace: "Aptos",
       fontSize: 8,
@@ -491,30 +491,30 @@ export async function GET(req: NextRequest) {
       color: "64748B",
     });
     slide.addText("Client", {
-      x: 10.25,
-      y: 4.78,
-      w: 2,
+      x: 9.72,
+      y: 4.9,
+      w: 0.7,
       h: 0.18,
       fontFace: "Aptos",
       fontSize: 8,
       bold: true,
       color: "64748B",
     });
-    slide.addText(vendorContacts || "Not provided", {
-      x: 8.1,
-      y: 4.98,
-      w: 2,
-      h: 0.32,
+    slide.addText(vendorLines.length ? vendorLines.join("\n") : "Not provided", {
+      x: 8.88,
+      y: 4.88,
+      w: 0.9,
+      h: 0.45,
       fontFace: "Aptos",
       fontSize: 8,
       color: "334155",
       fit: "shrink",
     });
-    slide.addText(clientContacts || "Not provided", {
-      x: 10.25,
-      y: 4.98,
-      w: 2.2,
-      h: 0.32,
+    slide.addText(clientLines.length ? clientLines.join("\n") : "Not provided", {
+      x: 10.38,
+      y: 4.88,
+      w: 0.92,
+      h: 0.45,
       fontFace: "Aptos",
       fontSize: 8,
       color: "334155",
