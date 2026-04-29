@@ -488,7 +488,7 @@ export default function ReportDetailPage() {
 
             <div style={{ display: "grid", gap: "0.75rem", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))" }}>
               <label className="field">
-                <span className="label">Vendor key contacts</span>
+                <span className="label">GMR Services key contacts</span>
                 <textarea
                   className="textarea"
                   value={vendorKeyContacts}

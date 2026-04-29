@@ -483,10 +483,10 @@ export async function GET(req: NextRequest) {
       color: "64748B",
       align: "center",
     });
-    slide.addText("Vendor", {
+    slide.addText("GMR Services", {
       x: 8.22,
       y: 4.9,
-      w: 0.7,
+      w: 1.35,
       h: 0.18,
       fontFace: "Aptos",
       fontSize: 8,

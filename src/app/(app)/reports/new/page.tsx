@@ -129,13 +129,13 @@ export default function NewReportPage() {
 
         <div style={{ display: "grid", gap: "0.75rem", gridTemplateColumns: "repeat(auto-fit, minmax(240px, 1fr))" }}>
           <label className="field">
-            <span className="label">Vendor key contacts</span>
+            <span className="label">GMR Services key contacts</span>
             <textarea
               className="textarea"
               value={vendorKeyContacts}
               onChange={(e) => setVendorKeyContacts(e.target.value)}
               rows={4}
-              placeholder="Enter vendor names/roles, one per line"
+              placeholder="Enter GMR Services names/roles, one per line"
             />
           </label>
 
