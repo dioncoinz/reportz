@@ -859,8 +859,17 @@ export async function GET(req: NextRequest) {
     const galleryX = 8.15;
     const galleryY = 2.05;
     const galleryW = 4.55;
-    const galleryH = 3.9;
-    const galleryContentY = galleryY + 0.42;
+    const galleryH = 5.3;
+    const galleryHeaderH = 0.42;
+    const galleryPaddingX = 0.23;
+    const galleryPaddingBottom = 0.24;
+    const galleryGapX = 0.14;
+    const galleryGapY = 0.12;
+    const galleryCols = 2;
+    const galleryRows = 3;
+    const tileW = (galleryW - galleryPaddingX * 2 - galleryGapX) / galleryCols;
+    const tileH =
+      (galleryH - galleryHeaderH - galleryPaddingBottom - galleryGapY * (galleryRows - 1)) / galleryRows;
 
     slide.addShape(pptx.ShapeType.roundRect, {
       x: galleryX,
@@ -882,41 +891,52 @@ export async function GET(req: NextRequest) {
       align: "center",
     });
 
-    if (!allPhotoPaths.length) {
-      slide.addText("No photos logged.", {
-        x: galleryX + 0.23,
-        y: galleryY + 2.65,
-        w: galleryW - 0.46,
-        h: 0.3,
-        align: "center",
-        fontFace: "Aptos",
-        fontSize: 11,
-        color: "64748B",
-        italic: true,
-      });
-    }
+    for (let i = 0; i < MAX_PHOTOS_PER_WORK_ORDER; i += 1) {
+      const col = i % galleryCols;
+      const row = Math.floor(i / galleryCols);
+      const x = galleryX + galleryPaddingX + col * (tileW + galleryGapX);
+      const y = galleryY + galleryHeaderH + row * (tileH + galleryGapY);
 
-    for (let i = 0; i < allPhotoPaths.length; i += 1) {
+      slide.addShape(pptx.ShapeType.roundRect, {
+        x,
+        y,
+        w: tileW,
+        h: tileH,
+        rectRadius: 0.03,
+        fill: { color: "FFFFFF" },
+        line: { color: "D8DEEA", pt: 0.75 },
+      });
+
       const path = allPhotoPaths[i];
+      if (!path) continue;
+
       const pbuf = await file("report-photos", path);
       if (!pbuf) continue;
 
       const optimizedPhoto = await optimizeImage(pbuf, path);
       const photoData = asDataUri(optimizedPhoto.buffer, optimizedPhoto.mime);
-      const col = i % 2;
-      const row = Math.floor(i / 2);
-      const x = galleryX + 0.23 + col * 2.1;
-      const y = galleryContentY + 0.08 + row * 1.56;
-      const w = 1.98;
-      const h = 1.44;
 
       slide.addImage({
         data: photoData,
         x,
         y,
-        w,
-        h,
-        sizing: { type: "contain", w, h },
+        w: tileW,
+        h: tileH,
+        sizing: { type: "cover", w: tileW, h: tileH },
+      });
+    }
+
+    if (!allPhotoPaths.length) {
+      slide.addText("No photos logged.", {
+        x: galleryX + 0.23,
+        y: galleryY + galleryH - 0.48,
+        w: galleryW - 0.46,
+        h: 0.22,
+        align: "center",
+        fontFace: "Aptos",
+        fontSize: 11,
+        color: "64748B",
+        italic: true,
       });
     }
   }
