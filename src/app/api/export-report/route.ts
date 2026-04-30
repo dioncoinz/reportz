@@ -859,7 +859,7 @@ export async function GET(req: NextRequest) {
         color: "0F172A",
       });
 
-      slide.addText(bulletRuns.length ? bulletRuns : "No entries.", {
+      slide.addText(bulletRuns.length ? bulletRuns : [{ text: "No entries.", options: { bullet: { indent: 14 } } }], {
         x: 0.9,
         y: section.y + 0.42,
         w: 6.8,
@@ -880,7 +880,7 @@ export async function GET(req: NextRequest) {
       y: galleryY,
       w: galleryW,
       h: galleryH,
-      fill: { color: "F8FAFC" },
+      fill: { color: "F8FAFF" },
       line: { color: "D8DEEA", pt: 1 },
     });
     slide.addText("Photos", {
