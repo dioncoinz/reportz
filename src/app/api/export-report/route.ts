@@ -465,17 +465,17 @@ export async function GET(req: NextRequest) {
       bold: true,
     });
     slide.addShape(pptx.ShapeType.roundRect, {
-      x: 7.8,
+      x: 7.58,
       y: 4.35,
-      w: 5.15,
+      w: 5.37,
       h: 1.15,
       fill: { color: "FFFFFF" },
       line: { color: "D8DEEA", pt: 1 },
     });
     slide.addText("Key Personnel", {
-      x: 8.03,
+      x: 7.82,
       y: 4.48,
-      w: 4.7,
+      w: 4.9,
       h: 0.22,
       fontFace: "Aptos",
       fontSize: 10,
@@ -484,19 +484,20 @@ export async function GET(req: NextRequest) {
       align: "center",
     });
     slide.addText("GMR Services", {
-      x: 8.22,
+      x: 7.9,
       y: 4.9,
-      w: 1.55,
+      w: 1.05,
       h: 0.18,
       fontFace: "Aptos",
-      fontSize: 8,
+      fontSize: 7,
       bold: true,
       color: "64748B",
+      fit: "shrink",
     });
     slide.addText("Client", {
-      x: 10.18,
+      x: 10.66,
       y: 4.9,
-      w: 0.8,
+      w: 0.52,
       h: 0.18,
       fontFace: "Aptos",
       fontSize: 8,
@@ -506,7 +507,7 @@ export async function GET(req: NextRequest) {
     slide.addText(vendorLines.length ? vendorLines.join("\n") : "Not provided", {
       x: 8.98,
       y: 4.88,
-      w: 1.1,
+      w: 1.55,
       h: 0.45,
       fontFace: "Aptos",
       fontSize: 8,
@@ -514,9 +515,9 @@ export async function GET(req: NextRequest) {
       fit: "shrink",
     });
     slide.addText(clientLines.length ? clientLines.join("\n") : "Not provided", {
-      x: 10.78,
+      x: 11.24,
       y: 4.88,
-      w: 1.2,
+      w: 1.45,
       h: 0.45,
       fontFace: "Aptos",
       fontSize: 8,
