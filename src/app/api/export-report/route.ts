@@ -859,7 +859,7 @@ export async function GET(req: NextRequest) {
         color: "0F172A",
       });
 
-      slide.addText(bulletRuns.length ? bulletRuns : [{ text: "No entries.", options: { bullet: { indent: 14 } } }], {
+      slide.addText(bulletRuns.length ? bulletRuns : "•  No entries.", {
         x: 0.9,
         y: section.y + 0.42,
         w: 6.8,
