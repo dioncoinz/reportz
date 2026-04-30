@@ -91,6 +91,7 @@ export default function ReportDetailPage() {
   const [deleting, setDeleting] = useState(false);
   const [editingDetails, setEditingDetails] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
+  const [exportingPowerPoint, setExportingPowerPoint] = useState(false);
   const [clientName, setClientName] = useState("");
   const [siteName, setSiteName] = useState("");
   const [shutdownName, setShutdownName] = useState("");
@@ -329,34 +330,39 @@ export default function ReportDetailPage() {
   }
 
   async function exportPowerPoint() {
-    if (!report) return;
+    if (!report || exportingPowerPoint) return;
 
-    const { data: sessionRes } = await supabase.auth.getSession();
-    const token = sessionRes.session?.access_token;
-    if (!token) {
-      setErr("You are not signed in.");
-      return;
+    setExportingPowerPoint(true);
+    try {
+      const { data: sessionRes } = await supabase.auth.getSession();
+      const token = sessionRes.session?.access_token;
+      if (!token) {
+        setErr("You are not signed in.");
+        return;
+      }
+
+      const res = await fetch(`/api/export-report?reportId=${report.id}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        setErr(json.error ?? "Export failed.");
+        return;
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${displayReportName(report.name)}.pptx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } finally {
+      setExportingPowerPoint(false);
     }
-
-    const res = await fetch(`/api/export-report?reportId=${report.id}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-
-    if (!res.ok) {
-      const json = await res.json().catch(() => ({}));
-      setErr(json.error ?? "Export failed.");
-      return;
-    }
-
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${displayReportName(report.name)}.pptx`;
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
   }
 
   if (!reportId) return <p className="muted">Missing report id.</p>;
@@ -437,8 +443,8 @@ export default function ReportDetailPage() {
               Exports
             </Link>
           ) : null}
-          <button className="btn" onClick={exportPowerPoint}>
-            Export PowerPoint
+          <button className="btn" onClick={exportPowerPoint} disabled={exportingPowerPoint}>
+            {exportingPowerPoint ? "download in progress" : "Export PowerPoint"}
           </button>
           {profile?.role === "manager" ? (
             <button className="btn btn-soft" onClick={() => setEditingDetails((v) => !v)} disabled={savingDetails}>

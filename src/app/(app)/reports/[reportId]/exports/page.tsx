@@ -24,6 +24,7 @@ export default function ExportsPage() {
 
   const [branding, setBranding] = useState<Branding | null>(null);
   const [saving, setSaving] = useState(false);
+  const [exportingPowerPoint, setExportingPowerPoint] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
 
   const [companyName, setCompanyName] = useState("Valeron");
@@ -111,34 +112,39 @@ export default function ExportsPage() {
   }
 
   async function exportWord() {
-    if (!canAccessExports) return;
+    if (!canAccessExports || exportingPowerPoint) return;
 
-    const { data: sessionRes } = await supabase.auth.getSession();
-    const token = sessionRes.session?.access_token;
-    if (!token) {
-      setMsg("You are not signed in.");
-      return;
+    setExportingPowerPoint(true);
+    try {
+      const { data: sessionRes } = await supabase.auth.getSession();
+      const token = sessionRes.session?.access_token;
+      if (!token) {
+        setMsg("You are not signed in.");
+        return;
+      }
+
+      const res = await fetch(`/api/export-report?reportId=${reportId}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}));
+        setMsg(`Export failed: ${json.error ?? "unknown error"}`);
+        return;
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = "report.pptx";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } finally {
+      setExportingPowerPoint(false);
     }
-
-    const res = await fetch(`/api/export-report?reportId=${reportId}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-
-    if (!res.ok) {
-      const json = await res.json().catch(() => ({}));
-      setMsg(`Export failed: ${json.error ?? "unknown error"}`);
-      return;
-    }
-
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "report.pptx";
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    URL.revokeObjectURL(url);
   }
 
   if (pLoading) return <p className="muted">Loading...</p>;
@@ -207,8 +213,8 @@ export default function ExportsPage() {
       </div>
 
       <div>
-        <button className="btn" onClick={exportWord}>
-          Export PowerPoint (.pptx)
+        <button className="btn" onClick={exportWord} disabled={exportingPowerPoint}>
+          {exportingPowerPoint ? "download in progress" : "Export PowerPoint (.pptx)"}
         </button>
       </div>
     </div>
