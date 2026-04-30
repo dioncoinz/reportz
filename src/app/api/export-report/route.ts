@@ -411,7 +411,7 @@ export async function GET(req: NextRequest) {
     });
     slide.addText("Shutdown Completion Report", {
       x: 0.6,
-      y: 2.2,
+      y: 2.45,
       w: 12,
       h: 0.6,
       fontFace: "Aptos",
@@ -421,7 +421,7 @@ export async function GET(req: NextRequest) {
     });
     slide.addText(title.clientSite, {
       x: 0.6,
-      y: 3.05,
+      y: 3.3,
       w: 12,
       h: 0.45,
       fontFace: "Aptos",
@@ -432,7 +432,7 @@ export async function GET(req: NextRequest) {
     if (title.shutdown) {
       slide.addText(title.shutdown, {
         x: 0.6,
-        y: 3.82,
+        y: 4.07,
         w: 12,
         h: 0.32,
         fontFace: "Aptos",
@@ -443,14 +443,14 @@ export async function GET(req: NextRequest) {
     }
     slide.addShape(pptx.ShapeType.roundRect, {
       x: 0.6,
-      y: 4.35,
+      y: 5.4,
       w: 6.9,
       h: 1.15,      fill: { color: "FFFFFF" },
       line: { color: "D8DEEA", pt: 1 },
     });
     slide.addText(`${startMonthYear(report.start_date)}`, {
       x: 0.9,
-      y: 4.8,
+      y: 5.85,
       w: 6.4,
       h: 0.3,
       fontFace: "Aptos",
@@ -460,7 +460,7 @@ export async function GET(req: NextRequest) {
     });
     slide.addShape(pptx.ShapeType.roundRect, {
       x: 7.58,
-      y: 4.35,
+      y: 5.4,
       w: 5.37,
       h: 1.15,
       fill: { color: "FFFFFF" },
@@ -468,7 +468,7 @@ export async function GET(req: NextRequest) {
     });
     slide.addText("Key Personnel", {
       x: 7.82,
-      y: 4.48,
+      y: 5.53,
       w: 4.9,
       h: 0.22,
       fontFace: "Aptos",
@@ -479,7 +479,7 @@ export async function GET(req: NextRequest) {
     });
     slide.addText("GMR Services", {
       x: 7.9,
-      y: 4.9,
+      y: 5.95,
       w: 1.05,
       h: 0.18,
       fontFace: "Aptos",
@@ -490,7 +490,7 @@ export async function GET(req: NextRequest) {
     });
     slide.addText("Client", {
       x: 10.66,
-      y: 4.9,
+      y: 5.95,
       w: 0.52,
       h: 0.18,
       fontFace: "Aptos",
@@ -500,7 +500,7 @@ export async function GET(req: NextRequest) {
     });
     slide.addText(vendorLines.length ? vendorLines.join("\n") : "Not provided", {
       x: 8.98,
-      y: 4.88,
+      y: 5.93,
       w: 1.55,
       h: 0.45,
       fontFace: "Aptos",
@@ -510,7 +510,7 @@ export async function GET(req: NextRequest) {
     });
     slide.addText(clientLines.length ? clientLines.join("\n") : "Not provided", {
       x: 11.24,
-      y: 4.88,
+      y: 5.93,
       w: 1.45,
       h: 0.45,
       fontFace: "Aptos",
