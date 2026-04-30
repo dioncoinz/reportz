@@ -224,12 +224,6 @@ function startMonthYear(dateStr: string | null) {
   return d.toLocaleString("en-US", { month: "long", year: "numeric" });
 }
 
-function formatCompletedDate(dateStr: string | null) {
-  if (!dateStr) return "N/A";
-  const d = new Date(dateStr);
-  if (Number.isNaN(d.getTime())) return "N/A";
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
-}
 export async function GET(req: NextRequest) {
   const authHeader = req.headers.get("authorization") ?? "";
   const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
@@ -796,22 +790,19 @@ export async function GET(req: NextRequest) {
     });
 
     const list = updatesByWo.get(w.id) ?? [];
-    const statusMeta =
-      w.status === "cancelled"
-        ? `Reason: ${w.cancelled_reason ?? "Not provided"}`
-        : w.status === "complete"
-        ? `Completed: ${formatCompletedDate(w.completed_at)}`
-        : "In progress";
+    const statusMeta = w.status === "cancelled" ? `Reason: ${w.cancelled_reason ?? "Not provided"}` : w.status === "complete" ? "" : "In progress";
 
-    slide.addText(statusMeta, {
-      x: 3.2,
-      y: 1.36,
-      w: 6.8,
-      h: 0.22,
-      fontFace: "Aptos",
-      fontSize: 11,
-      color: "334155",
-    });
+    if (statusMeta) {
+      slide.addText(statusMeta, {
+        x: 3.2,
+        y: 1.36,
+        w: 6.8,
+        h: 0.22,
+        fontFace: "Aptos",
+        fontSize: 11,
+        color: "334155",
+      });
+    }
 
     const comments = list.filter((u) => getEntryKind(u.comment) === "comments");
     const issues = list.filter((u) => getEntryKind(u.comment) === "issues");
