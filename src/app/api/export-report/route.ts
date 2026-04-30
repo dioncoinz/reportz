@@ -816,9 +816,23 @@ export async function GET(req: NextRequest) {
     const issues = list.filter((u) => getEntryKind(u.comment) === "issues");
     const allPhotoPaths = [...new Set(list.flatMap((u) => u.photo_urls ?? []))].slice(0, MAX_PHOTOS_PER_WORK_ORDER);
 
+    const galleryX = 8.15;
+    const galleryY = 2.05;
+    const galleryW = 4.55;
+    const galleryH = 5.3;
+    const galleryHeaderH = 0.42;
+    const galleryPaddingX = 0.23;
+    const galleryPaddingBottom = 0.24;
+    const galleryGapX = 0.14;
+    const galleryGapY = 0.12;
+    const galleryCols = 2;
+    const galleryRows = 3;
+    const commentSectionGap = 0.3;
+    const commentSectionH = (galleryH - commentSectionGap) / 2;
+
     const sections = [
-      { title: "Completion Comments", rows: comments, y: 2.05, h: 1.7 },
-      { title: "Issues/Recommendations", rows: issues, y: 4.0, h: 1.95 },
+      { title: "Completion Comments", rows: comments, y: galleryY, h: commentSectionH },
+      { title: "Issues/Recommendations", rows: issues, y: galleryY + commentSectionH + commentSectionGap, h: commentSectionH },
     ] as const;
 
     for (const section of sections) {
@@ -848,7 +862,7 @@ export async function GET(req: NextRequest) {
         x: 0.9,
         y: section.y + 0.42,
         w: 6.8,
-        h: 0.9,
+        h: section.h - 0.64,
         fontFace: "Aptos",
         fontSize: 11,
         color: "334155",
@@ -856,17 +870,6 @@ export async function GET(req: NextRequest) {
 
     }
 
-    const galleryX = 8.15;
-    const galleryY = 2.05;
-    const galleryW = 4.55;
-    const galleryH = 5.3;
-    const galleryHeaderH = 0.42;
-    const galleryPaddingX = 0.23;
-    const galleryPaddingBottom = 0.24;
-    const galleryGapX = 0.14;
-    const galleryGapY = 0.12;
-    const galleryCols = 2;
-    const galleryRows = 3;
     const tileW = (galleryW - galleryPaddingX * 2 - galleryGapX) / galleryCols;
     const tileH =
       (galleryH - galleryHeaderH - galleryPaddingBottom - galleryGapY * (galleryRows - 1)) / galleryRows;
