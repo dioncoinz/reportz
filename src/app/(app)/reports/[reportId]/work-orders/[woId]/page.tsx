@@ -27,10 +27,12 @@ type UpdateRow = {
 
 const ISSUE_PREFIX = "__ISSUE__:";
 const NEXT_SHUT_PREFIX = "__NEXT_SHUT__:";
+const EMERGENT_PREFIX = "__EMERGENT__:";
 
-function getEntryKind(comment: string | null): "issue" | "update" {
+function getEntryKind(comment: string | null): "issue" | "emergent" | "update" {
   if (!comment) return "update";
   if (comment.startsWith(ISSUE_PREFIX)) return "issue";
+  if (comment.startsWith(EMERGENT_PREFIX)) return "emergent";
   return "update";
 }
 
@@ -38,6 +40,7 @@ function stripEntryPrefix(comment: string | null): string | null {
   if (!comment) return null;
   if (comment.startsWith(ISSUE_PREFIX)) return comment.slice(ISSUE_PREFIX.length).trim() || null;
   if (comment.startsWith(NEXT_SHUT_PREFIX)) return comment.slice(NEXT_SHUT_PREFIX.length).trim() || null;
+  if (comment.startsWith(EMERGENT_PREFIX)) return comment.slice(EMERGENT_PREFIX.length).trim() || null;
   return comment;
 }
 
@@ -57,11 +60,13 @@ export default function WorkOrderDetailPage() {
   const [files, setFiles] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [savingIssues, setSavingIssues] = useState(false);
+  const [savingEmergent, setSavingEmergent] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
   const [signedMap, setSignedMap] = useState<Record<string, string>>({});
   const [cancelReason, setCancelReason] = useState("");
   const [showCancelPrompt, setShowCancelPrompt] = useState(false);
   const [issuesComment, setIssuesComment] = useState("");
+  const [emergentComment, setEmergentComment] = useState("");
   const [editingUpdateId, setEditingUpdateId] = useState<string | null>(null);
   const [editingComment, setEditingComment] = useState("");
   const [savingEditId, setSavingEditId] = useState<string | null>(null);
@@ -257,12 +262,14 @@ export default function WorkOrderDetailPage() {
     setMsg("Work order details updated");
   }
 
-  async function addEntry(kind: "update" | "issue") {
+  async function addEntry(kind: "update" | "issue" | "emergent") {
     const isUpdate = kind === "update";
     const isIssue = kind === "issue";
+    const isEmergent = kind === "emergent";
 
     if (isUpdate) setSaving(true);
     if (isIssue) setSavingIssues(true);
+    if (isEmergent) setSavingEmergent(true);
 
     setMsg(null);
     setErr(null);
@@ -273,18 +280,20 @@ export default function WorkOrderDetailPage() {
     if (userErr || !user) {
       if (isUpdate) setSaving(false);
       if (isIssue) setSavingIssues(false);
+      if (isEmergent) setSavingEmergent(false);
       setErr("You are not signed in.");
       return;
     }
 
     const chosenFiles = isUpdate ? files : [];
-    const rawComment = isUpdate ? comment : issuesComment;
+    const rawComment = isUpdate ? comment : isIssue ? issuesComment : emergentComment;
     const photoPaths: string[] = [];
     const existingPhotoCount = updates.reduce((n, u) => n + (u.photo_urls?.length ?? 0), 0);
 
     if (existingPhotoCount + chosenFiles.length > maxPhotosPerWo) {
       if (isUpdate) setSaving(false);
       if (isIssue) setSavingIssues(false);
+      if (isEmergent) setSavingEmergent(false);
       setErr(`Photo limit reached. Max ${maxPhotosPerWo} photos per work order.`);
       return;
     }
@@ -301,6 +310,7 @@ export default function WorkOrderDetailPage() {
       if (upErr) {
         if (isUpdate) setSaving(false);
         if (isIssue) setSavingIssues(false);
+        if (isEmergent) setSavingEmergent(false);
         setErr(`Photo upload failed: ${upErr.message}`);
         return;
       }
@@ -309,7 +319,11 @@ export default function WorkOrderDetailPage() {
     }
 
     const cleaned = rawComment.trim();
-    const taggedComment = isIssue ? `${ISSUE_PREFIX} ${cleaned}`.trim() : cleaned;
+    const taggedComment = isIssue
+      ? `${ISSUE_PREFIX} ${cleaned}`.trim()
+      : isEmergent
+        ? `${EMERGENT_PREFIX} ${cleaned}`.trim()
+        : cleaned;
 
     const { error: insErr } = await supabase.from("wo_updates").insert({
       work_order_id: woId,
@@ -321,6 +335,7 @@ export default function WorkOrderDetailPage() {
     if (insErr) {
       if (isUpdate) setSaving(false);
       if (isIssue) setSavingIssues(false);
+      if (isEmergent) setSavingEmergent(false);
       setErr(insErr.message);
       return;
     }
@@ -328,13 +343,16 @@ export default function WorkOrderDetailPage() {
     if (isUpdate) {
       setComment("");
       setFiles([]);
-    } else {
+    }
+    if (isIssue) {
       setIssuesComment("");
     }
+    if (isEmergent) setEmergentComment("");
 
-    setMsg(isUpdate ? "Update added" : "Issue saved");
+    setMsg(isUpdate ? "Update added" : isIssue ? "Issue saved" : "Emergent work added");
     if (isUpdate) setSaving(false);
     if (isIssue) setSavingIssues(false);
+    if (isEmergent) setSavingEmergent(false);
     await load();
   }
 
@@ -476,6 +494,7 @@ export default function WorkOrderDetailPage() {
 
   const generalUpdates = updates.filter((u) => getEntryKind(u.comment) === "update");
   const issueEntries = updates.filter((u) => getEntryKind(u.comment) === "issue");
+  const emergentEntries = updates.filter((u) => getEntryKind(u.comment) === "emergent");
   const existingPhotoCount = updates.reduce((n, u) => n + (u.photo_urls?.length ?? 0), 0);
   const remainingPhotoSlots = Math.max(maxPhotosPerWo - existingPhotoCount, 0);
 
@@ -737,6 +756,26 @@ export default function WorkOrderDetailPage() {
         </div>
       </div>
 
+      <div className="section-card grid" style={{ gap: "0.75rem" }}>
+        <h3>Emergent Work</h3>
+        <textarea
+          className="textarea"
+          value={emergentComment}
+          onChange={(e) => setEmergentComment(e.target.value)}
+          placeholder="Describe emergent work added during the job..."
+          rows={3}
+        />
+        <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
+          <button
+            className="btn btn-primary"
+            onClick={() => addEntry("emergent")}
+            disabled={savingEmergent || !emergentComment.trim()}
+          >
+            {savingEmergent ? "Saving..." : "Add emergent work"}
+          </button>
+        </div>
+      </div>
+
       <div className="grid">
         <h3>Comments</h3>
 
@@ -871,6 +910,24 @@ export default function WorkOrderDetailPage() {
           </div>
         ))}
         {issueEntries.length === 0 ? <p className="muted">No issues logged yet.</p> : null}
+      </div>
+
+      <div className="grid">
+        <h3>Emergent Work</h3>
+        {emergentEntries.map((u) => (
+          <div key={u.id} className="section-card" style={{ padding: "0.85rem" }}>
+            <div className="muted" style={{ fontSize: "0.78rem" }}>
+              {new Date(u.created_at).toLocaleString()}
+            </div>
+            {u.comment ? <div style={{ marginTop: "0.45rem" }}>{stripEntryPrefix(u.comment)}</div> : null}
+            {u.photo_urls?.length ? (
+              <div className="photo-grid" style={{ marginTop: "0.65rem" }}>
+                {u.photo_urls.map((path) => renderPhotoThumb(path, "Emergent work photo", u.id))}
+              </div>
+            ) : null}
+          </div>
+        ))}
+        {emergentEntries.length === 0 ? <p className="muted">No emergent work added yet.</p> : null}
       </div>
 
     </div>
