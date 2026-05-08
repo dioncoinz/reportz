@@ -11,6 +11,7 @@ type WorkOrderRow = {
   cancelled_reason: string | null;
   completed_at: string | null;
   created_at: string;
+  display_order?: number | null;
 };
 const EMERGENT_PREFIX = "__EMERGENT__:";
 
@@ -32,6 +33,18 @@ function getErrorMessage(err: unknown) {
 function isMissingColumnError(err: unknown, column: string) {
   const msg = getErrorMessage(err).toLowerCase();
   return msg.includes("column") && msg.includes(column.toLowerCase()) && msg.includes("does not exist");
+}
+
+function sortEmergentLast<T extends { emergent_work: boolean; display_order?: number | null; created_at?: string | null }>(
+  rows: T[]
+) {
+  return [...rows].sort((a, b) => {
+    if (a.emergent_work !== b.emergent_work) return a.emergent_work ? 1 : -1;
+    const ao = a.display_order ?? Number.MAX_SAFE_INTEGER;
+    const bo = b.display_order ?? Number.MAX_SAFE_INTEGER;
+    if (ao !== bo) return ao - bo;
+    return (a.created_at ?? "").localeCompare(b.created_at ?? "");
+  });
 }
 
 export async function GET(req: NextRequest) {
@@ -80,12 +93,40 @@ export async function GET(req: NextRequest) {
 
   const { data: workOrders, error: woErr } = await adminClient
     .from("work_orders")
-    .select("id, wo_number, title, status, emergent_work, cancelled_reason, completed_at, created_at")
+    .select("id, wo_number, title, status, emergent_work, cancelled_reason, completed_at, created_at, display_order")
     .eq("report_id", reportId)
-    .order("wo_number", { ascending: true })
+    .order("display_order", { ascending: true, nullsFirst: false })
+    .order("created_at", { ascending: true })
     .returns<WorkOrderRow[]>();
 
   if (woErr) {
+    if (isMissingColumnError(woErr, "display_order")) {
+      const fallback = await adminClient
+        .from("work_orders")
+        .select("id, wo_number, title, status, emergent_work, cancelled_reason, completed_at, created_at")
+        .eq("report_id", reportId)
+        .order("created_at", { ascending: true })
+        .returns<Array<Omit<WorkOrderRow, "display_order">>>();
+
+      if (fallback.error) return NextResponse.json({ error: fallback.error.message }, { status: 500 });
+
+      const rows = fallback.data ?? [];
+      const woIds = rows.map((w) => w.id);
+      if (!woIds.length) return NextResponse.json({ workOrders: rows });
+      const markerRes = await adminClient
+        .from("wo_updates")
+        .select("work_order_id, comment")
+        .in("work_order_id", woIds);
+      if (markerRes.error) return NextResponse.json({ error: markerRes.error.message }, { status: 500 });
+      const emergentIds = new Set(
+        (markerRes.data ?? [])
+          .filter((u) => typeof u.comment === "string" && u.comment.startsWith(EMERGENT_PREFIX))
+          .map((u) => String(u.work_order_id))
+      );
+      const withEmergent = rows.map((w) => ({ ...w, emergent_work: w.emergent_work || emergentIds.has(w.id) }));
+      return NextResponse.json({ workOrders: sortEmergentLast(withEmergent) });
+    }
+
     if (!isMissingColumnError(woErr, "emergent_work")) {
       return NextResponse.json({ error: woErr.message }, { status: 500 });
     }
@@ -94,7 +135,7 @@ export async function GET(req: NextRequest) {
       .from("work_orders")
       .select("id, wo_number, title, status, cancelled_reason, completed_at, created_at")
       .eq("report_id", reportId)
-      .order("wo_number", { ascending: true })
+      .order("created_at", { ascending: true })
       .returns<Array<Omit<WorkOrderRow, "emergent_work">>>();
 
     if (fallback.error) return NextResponse.json({ error: fallback.error.message }, { status: 500 });
@@ -112,9 +153,8 @@ export async function GET(req: NextRequest) {
         .filter((u) => typeof u.comment === "string" && u.comment.startsWith(EMERGENT_PREFIX))
         .map((u) => String(u.work_order_id))
     );
-    return NextResponse.json({
-      workOrders: mapped.map((w) => ({ ...w, emergent_work: w.emergent_work || emergentIds.has(w.id) })),
-    });
+    const withEmergent = mapped.map((w) => ({ ...w, emergent_work: w.emergent_work || emergentIds.has(w.id) }));
+    return NextResponse.json({ workOrders: sortEmergentLast(withEmergent) });
   }
 
   const rows = workOrders ?? [];
@@ -130,7 +170,6 @@ export async function GET(req: NextRequest) {
       .filter((u) => typeof u.comment === "string" && u.comment.startsWith(EMERGENT_PREFIX))
       .map((u) => String(u.work_order_id))
   );
-  return NextResponse.json({
-    workOrders: rows.map((w) => ({ ...w, emergent_work: w.emergent_work || emergentIds.has(w.id) })),
-  });
+  const withEmergent = rows.map((w) => ({ ...w, emergent_work: w.emergent_work || emergentIds.has(w.id) }));
+  return NextResponse.json({ workOrders: sortEmergentLast(withEmergent) });
 }

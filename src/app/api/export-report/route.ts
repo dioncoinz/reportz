@@ -31,6 +31,7 @@ type WorkOrderRow = {
   status: "open" | "complete" | "cancelled" | "archived";
   emergent_work: boolean;
   cancelled_reason: string | null;
+  display_order?: number | null;
 };
 
 type UpdateRow = {
@@ -177,28 +178,45 @@ async function fetchAllWorkOrders(
   reportId: string
 ): Promise<{ rows: WorkOrderRow[]; error: string | null }> {
   const pageSize = 1000;
+  type FetchWorkOrderRow = Omit<WorkOrderRow, "emergent_work"> & { emergent_work?: boolean };
 
-  async function fetchPage(withEmergent: boolean, from: number, to: number) {
-    const selectCols = withEmergent
-      ? "id, wo_number, title, status, emergent_work, cancelled_reason"
-      : "id, wo_number, title, status, cancelled_reason";
-    return supabase
+  async function fetchPage(withEmergent: boolean, withDisplayOrder: boolean, from: number, to: number) {
+    const selectCols = [
+      "id",
+      "wo_number",
+      "title",
+      "status",
+      withEmergent ? "emergent_work" : null,
+      "cancelled_reason",
+      withDisplayOrder ? "display_order" : null,
+    ].filter(Boolean).join(", ");
+    const query = supabase
       .from("work_orders")
       .select(selectCols)
-      .eq("report_id", reportId)
-      .order("wo_number")
-      .range(from, to);
+      .eq("report_id", reportId);
+
+    if (withDisplayOrder) query.order("display_order", { ascending: true, nullsFirst: false });
+    query.order("created_at", { ascending: true });
+
+    return query.range(from, to).returns<FetchWorkOrderRow[]>();
   }
 
   let withEmergent = true;
+  let withDisplayOrder = true;
   let rows: WorkOrderRow[] = [];
   let from = 0;
 
   while (true) {
     const to = from + pageSize - 1;
-    const page = await fetchPage(withEmergent, from, to);
+    const page = await fetchPage(withEmergent, withDisplayOrder, from, to);
 
     if (page.error) {
+      if (withDisplayOrder && isMissingColumnError(page.error, "display_order")) {
+        withDisplayOrder = false;
+        rows = [];
+        from = 0;
+        continue;
+      }
       if (withEmergent && isMissingColumnError(page.error, "emergent_work")) {
         withEmergent = false;
         rows = [];
@@ -208,7 +226,7 @@ async function fetchAllWorkOrders(
       return { rows: [], error: page.error.message };
     }
 
-    const chunk = (page.data ?? []) as Array<Omit<WorkOrderRow, "emergent_work"> & { emergent_work?: boolean }>;
+    const chunk = page.data ?? [];
     if (!chunk.length) break;
 
     rows.push(

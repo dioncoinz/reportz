@@ -53,11 +53,18 @@ export async function POST(req: NextRequest) {
     if (!reportRow) return NextResponse.json({ error: "Report not found" }, { status: 404 });
 
     let supportsTenantIdOnWorkOrders = true;
+    let supportsDisplayOrderOnWorkOrders = true;
     {
-      const probe = await supabase.from("work_orders").select("tenant_id").limit(1);
-      if (probe.error) {
-        if (isMissingColumnError(probe.error, "tenant_id")) supportsTenantIdOnWorkOrders = false;
-        else throw probe.error;
+      const tenantProbe = await supabase.from("work_orders").select("tenant_id").limit(1);
+      if (tenantProbe.error) {
+        if (isMissingColumnError(tenantProbe.error, "tenant_id")) supportsTenantIdOnWorkOrders = false;
+        else throw tenantProbe.error;
+      }
+
+      const displayOrderProbe = await supabase.from("work_orders").select("display_order").limit(1);
+      if (displayOrderProbe.error) {
+        if (isMissingColumnError(displayOrderProbe.error, "display_order")) supportsDisplayOrderOnWorkOrders = false;
+        else throw displayOrderProbe.error;
       }
     }
 
@@ -69,7 +76,13 @@ export async function POST(req: NextRequest) {
     const worksheet = workbook.worksheets[0];
     if (!worksheet) throw new Error("No worksheet found");
 
-    type ImportRow = { report_id: string; wo_number: string; title: string; tenant_id?: string | null };
+    type ImportRow = {
+      report_id: string;
+      wo_number: string;
+      title: string;
+      display_order?: number;
+      tenant_id?: string | null;
+    };
     const parsedRows: ImportRow[] = [];
 
     worksheet.eachRow((row, rowNumber) => {
@@ -84,6 +97,7 @@ export async function POST(req: NextRequest) {
           wo_number: wo,
           title,
         };
+        if (supportsDisplayOrderOnWorkOrders) nextRow.display_order = parsedRows.length + 1;
         if (supportsTenantIdOnWorkOrders) nextRow.tenant_id = reportRow.tenant_id;
         parsedRows.push(nextRow);
       }
