@@ -8,6 +8,21 @@ const supabase = createClient(
   process.env.SUPABASE_SERVICE_ROLE_KEY!
 );
 
+function getErrorMessage(err: unknown) {
+  if (err instanceof Error && err.message) return err.message;
+  if (typeof err === "string") return err;
+  if (err && typeof err === "object") {
+    const maybeMessage = (err as { message?: unknown }).message;
+    if (typeof maybeMessage === "string" && maybeMessage.trim().length > 0) return maybeMessage;
+  }
+  return "Unknown error";
+}
+
+function isMissingColumnError(err: unknown, column: string) {
+  const msg = getErrorMessage(err).toLowerCase();
+  return msg.includes("column") && msg.includes(column.toLowerCase()) && msg.includes("does not exist");
+}
+
 export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
@@ -26,7 +41,7 @@ export async function POST(req: NextRequest) {
     const worksheet = workbook.worksheets[0];
     if (!worksheet) throw new Error("No worksheet found");
 
-    const rows: { report_id: string; wo_number: string; title: string }[] = [];
+    const rows: { report_id: string; wo_number: string; title: string; display_order: number }[] = [];
 
     worksheet.eachRow((row, rowNumber) => {
       if (rowNumber === 1) return; // skip header
@@ -39,6 +54,7 @@ export async function POST(req: NextRequest) {
           report_id: reportId,
           wo_number: wo,
           title,
+          display_order: rows.length + 1,
         });
       }
     });
@@ -49,11 +65,21 @@ export async function POST(req: NextRequest) {
 
     const { error } = await supabase.from("work_orders").insert(rows);
 
-    if (error) throw error;
+    if (error) {
+      if (!isMissingColumnError(error, "display_order")) throw error;
+
+      const fallbackRows = rows.map((row) => ({
+        report_id: row.report_id,
+        wo_number: row.wo_number,
+        title: row.title,
+      }));
+      const { error: fallbackError } = await supabase.from("work_orders").insert(fallbackRows);
+      if (fallbackError) throw fallbackError;
+    }
 
     return NextResponse.json({ inserted: rows.length });
-  } catch (err: any) {
+  } catch (err: unknown) {
     console.error(err);
-    return NextResponse.json({ error: err.message }, { status: 500 });
+    return NextResponse.json({ error: getErrorMessage(err) }, { status: 500 });
   }
 }

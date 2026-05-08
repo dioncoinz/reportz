@@ -37,6 +37,7 @@ type WorkOrderRow = {
   status: "open" | "complete" | "cancelled" | "archived";
   cancelled_reason: string | null;
   completed_at: string | null;
+  display_order?: number | null;
 };
 
 type UpdateRow = {
@@ -324,14 +325,31 @@ export async function GET(req: NextRequest) {
     .eq("tenant_id", report.tenant_id)
     .maybeSingle<BrandingRow>();
 
-  const { data: wos } = await supabase
+  const wosResult = await supabase
     .from("work_orders")
-    .select("id, wo_number, title, status, cancelled_reason, completed_at")
+    .select("id, wo_number, title, status, cancelled_reason, completed_at, display_order")
     .eq("report_id", id)
-    .order("wo_number")
+    .order("display_order", { ascending: true, nullsFirst: false })
+    .order("created_at", { ascending: true })
     .returns<WorkOrderRow[]>();
 
-  const woRows = wos ?? [];
+  const wosFallback = wosResult.error && isMissingColumn(wosResult.error, "display_order")
+    ? await supabase
+        .from("work_orders")
+        .select("id, wo_number, title, status, cancelled_reason, completed_at")
+        .eq("report_id", id)
+        .order("created_at", { ascending: true })
+        .returns<WorkOrderRow[]>()
+    : null;
+
+  if (wosResult.error && !wosFallback) {
+    return NextResponse.json({ error: wosResult.error.message }, { status: 500 });
+  }
+  if (wosFallback?.error) {
+    return NextResponse.json({ error: wosFallback.error.message }, { status: 500 });
+  }
+
+  const woRows = (wosFallback?.data ?? wosResult.data) ?? [];
   const woIds = woRows.map((w) => w.id);
 
   const { data: updates } = woIds.length
