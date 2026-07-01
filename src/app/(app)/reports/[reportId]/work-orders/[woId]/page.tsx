@@ -480,7 +480,6 @@ export default function WorkOrderDetailPage() {
 
   const generalUpdates = updates.filter((u) => getEntryKind(u.comment) === "update");
   const issueEntries = updates.filter((u) => getEntryKind(u.comment) === "issue");
-  const emergentEntries = updates.filter((u) => getEntryKind(u.comment) === "emergent");
   const existingPhotoCount = updates.reduce((n, u) => n + (u.photo_urls?.length ?? 0), 0);
   const remainingPhotoSlots = Math.max(maxPhotosPerWo - existingPhotoCount, 0);
 
@@ -876,24 +875,6 @@ export default function WorkOrderDetailPage() {
           </div>
         ))}
         {issueEntries.length === 0 ? <p className="muted">No issues logged yet.</p> : null}
-      </div>
-
-      <div className="grid">
-        <h3>Emergent Work</h3>
-        {emergentEntries.map((u) => (
-          <div key={u.id} className="section-card" style={{ padding: "0.85rem" }}>
-            <div className="muted" style={{ fontSize: "0.78rem" }}>
-              {new Date(u.created_at).toLocaleString()}
-            </div>
-            {u.comment ? <div style={{ marginTop: "0.45rem" }}>{stripEntryPrefix(u.comment)}</div> : null}
-            {u.photo_urls?.length ? (
-              <div className="photo-grid" style={{ marginTop: "0.65rem" }}>
-                {u.photo_urls.map((path) => renderPhotoThumb(path, "Emergent work photo", u.id))}
-              </div>
-            ) : null}
-          </div>
-        ))}
-        {emergentEntries.length === 0 ? <p className="muted">No emergent work added yet.</p> : null}
       </div>
 
     </div>
