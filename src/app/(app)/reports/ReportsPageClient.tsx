@@ -5,6 +5,7 @@ import { Suspense, useEffect, useState } from "react";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
 import { useProfile } from "@/lib/useProfile";
 import { useSearchParams } from "next/navigation";
+import { formatDate } from "@/lib/date-format";
 
 type ReportRow = {
   id: string;
@@ -196,7 +197,7 @@ function ReportsPageContent() {
               </div>
 
               <p className="muted" style={{ margin: "0.5rem 0 0" }}>
-                {r.start_date ?? "?"} {"->"} {r.end_date ?? "?"}
+                {formatDate(r.start_date)} {"->"} {formatDate(r.end_date)}
               </p>
 
               <div style={{ marginTop: "0.9rem", display: "flex", gap: "0.55rem", flexWrap: "wrap", alignItems: "center" }}>

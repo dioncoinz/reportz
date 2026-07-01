@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
 import { useProfile } from "@/lib/useProfile";
 import { hasManagerAccess } from "@/lib/roles";
+import { formatDateTime } from "@/lib/date-format";
 
 type WorkOrder = {
   id: string;
@@ -747,7 +748,7 @@ export default function WorkOrderDetailPage() {
         {generalUpdates.map((u) => (
           <div key={u.id} className="section-card" style={{ padding: "0.85rem" }}>
             <div className="muted" style={{ fontSize: "0.78rem" }}>
-              {new Date(u.created_at).toLocaleString()}
+              {formatDateTime(u.created_at)}
             </div>
 
             {editingUpdateId === u.id ? (
@@ -816,7 +817,7 @@ export default function WorkOrderDetailPage() {
         {issueEntries.map((u) => (
           <div key={u.id} className="section-card" style={{ padding: "0.85rem" }}>
             <div className="muted" style={{ fontSize: "0.78rem" }}>
-              {new Date(u.created_at).toLocaleString()}
+              {formatDateTime(u.created_at)}
             </div>
             {editingIssueId === u.id ? (
               <div className="grid" style={{ marginTop: "0.5rem", gap: "0.55rem" }}>

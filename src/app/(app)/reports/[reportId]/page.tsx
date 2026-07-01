@@ -6,6 +6,7 @@ import { createSupabaseBrowser } from "@/lib/supabase/client";
 import Link from "next/link";
 import { useProfile } from "@/lib/useProfile";
 import { isExportOwner } from "@/lib/export-access";
+import { formatDate } from "@/lib/date-format";
 
 type ReportRow = {
   id: string;
@@ -419,7 +420,7 @@ export default function ReportDetailPage() {
           <div className="grid" style={{ gap: "0.45rem" }}>
             <h1>{displayReportName(report.name)}</h1>
             <div className="muted">
-              Dates: {report.start_date ?? "?"} {"->"} {report.end_date ?? "?"}
+              Dates: {formatDate(report.start_date)} {"->"} {formatDate(report.end_date)}
             </div>
           </div>
 
