@@ -204,6 +204,9 @@ h3 {
 }
 
 .btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 0.58rem 0.95rem;
@@ -212,6 +215,7 @@ h3 {
   cursor: pointer;
   background: var(--surface);
   color: var(--foreground);
+  text-decoration: none;
 }
 
 .btn:disabled {

@@ -956,8 +956,25 @@ export async function GET(req: NextRequest) {
 
   const out = await pptx.write({ outputType: "nodebuffer" });
   const body = new Uint8Array(out as Buffer);
+  const chunkSize = 64 * 1024;
+  let offset = 0;
 
-  return new NextResponse(body, {
+  // Vercel buffers ordinary function responses and rejects payloads over 4.5 MB.
+  // Pull-based streaming keeps photo-heavy PowerPoint exports off that response path.
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (offset >= body.byteLength) {
+        controller.close();
+        return;
+      }
+
+      const end = Math.min(offset + chunkSize, body.byteLength);
+      controller.enqueue(body.subarray(offset, end));
+      offset = end;
+    },
+  });
+
+  return new NextResponse(stream, {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
       "Content-Disposition": `attachment; filename="${safe(report.name)}.pptx"`,

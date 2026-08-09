@@ -93,6 +93,7 @@ export default function ReportDetailPage() {
   const [editingDetails, setEditingDetails] = useState(false);
   const [savingDetails, setSavingDetails] = useState(false);
   const [exportingPowerPoint, setExportingPowerPoint] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const [clientName, setClientName] = useState("");
   const [siteName, setSiteName] = useState("");
   const [shutdownName, setShutdownName] = useState("");
@@ -333,12 +334,13 @@ export default function ReportDetailPage() {
   async function exportPowerPoint() {
     if (!report || exportingPowerPoint) return;
 
+    setExportError(null);
     setExportingPowerPoint(true);
     try {
       const { data: sessionRes } = await supabase.auth.getSession();
       const token = sessionRes.session?.access_token;
       if (!token) {
-        setErr("You are not signed in.");
+        setExportError("You are not signed in.");
         return;
       }
 
@@ -348,7 +350,7 @@ export default function ReportDetailPage() {
 
       if (!res.ok) {
         const json = await res.json().catch(() => ({}));
-        setErr(json.error ?? "Export failed.");
+        setExportError(json.error ?? `Export failed (${res.status}). Please try again.`);
         return;
       }
 
@@ -361,6 +363,8 @@ export default function ReportDetailPage() {
       a.click();
       a.remove();
       URL.revokeObjectURL(url);
+    } catch {
+      setExportError("The export could not be downloaded. Please try again.");
     } finally {
       setExportingPowerPoint(false);
     }
@@ -463,6 +467,12 @@ export default function ReportDetailPage() {
             </button>
           ) : null}
         </div>
+
+        {exportError ? (
+          <p className="error-text" role="alert" style={{ margin: 0 }}>
+            {exportError}
+          </p>
+        ) : null}
 
         {editingDetails ? (
           <div className="section-card grid" style={{ boxShadow: "none", gap: "0.75rem" }}>
