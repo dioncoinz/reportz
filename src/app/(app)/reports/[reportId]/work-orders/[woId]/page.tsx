@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { createSupabaseBrowser } from "@/lib/supabase/client";
 import { useProfile } from "@/lib/useProfile";
@@ -29,6 +29,91 @@ type UpdateRow = {
 const ISSUE_PREFIX = "__ISSUE__:";
 const NEXT_SHUT_PREFIX = "__NEXT_SHUT__:";
 const EMERGENT_PREFIX = "__EMERGENT__:";
+const BULLET_PREFIX = /^\s*(?:[•●▪◦*-]|\d+[.)])\s*/;
+
+function cleanBulletText(value: string) {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.replace(BULLET_PREFIX, "").trim())
+    .filter(Boolean)
+    .join("\n");
+}
+
+function BulletText({ value }: { value: string }) {
+  const items = cleanBulletText(value).split("\n").filter(Boolean);
+  if (!items.length) return null;
+
+  return (
+    <ul className="entry-bullets">
+      {items.map((item, index) => (
+        <li key={`${index}-${item}`}>{item}</li>
+      ))}
+    </ul>
+  );
+}
+
+function BulletEditor({
+  value,
+  onChange,
+  placeholder,
+  minHeight,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  placeholder: string;
+  minHeight: string;
+}) {
+  const editorRef = useRef<HTMLUListElement>(null);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const currentValue = Array.from(editor.querySelectorAll(":scope > li"))
+      .map((item) => item.textContent ?? "")
+      .join("\n");
+    const nextValue = cleanBulletText(value);
+    if (cleanBulletText(currentValue) === nextValue) return;
+
+    const lines = nextValue ? nextValue.split("\n") : [""];
+    editor.replaceChildren(
+      ...lines.map((line, index) => {
+        const item = document.createElement("li");
+        item.textContent = line;
+        if (!line && index === 0) item.dataset.placeholder = placeholder;
+        return item;
+      })
+    );
+  }, [placeholder, value]);
+
+  function handleInput() {
+    const editor = editorRef.current;
+    if (!editor) return;
+
+    const items = Array.from(editor.querySelectorAll(":scope > li"));
+    const nextValue = items.length
+      ? items.map((item) => item.textContent ?? "").join("\n")
+      : editor.innerText;
+    onChange(nextValue);
+  }
+
+  return (
+    <ul
+      ref={editorRef}
+      className="textarea bullet-editor"
+      contentEditable
+      suppressContentEditableWarning
+      role="textbox"
+      aria-multiline="true"
+      aria-label={placeholder}
+      style={{ minHeight }}
+      onInput={handleInput}
+      onBlur={handleInput}
+    >
+      <li data-placeholder={placeholder} />
+    </ul>
+  );
+}
 
 function getEntryKind(comment: string | null): "issue" | "emergent" | "update" {
   if (!comment) return "update";
@@ -75,6 +160,7 @@ export default function WorkOrderDetailPage() {
   const [deletingPhotoKey, setDeletingPhotoKey] = useState<string | null>(null);
   const [editingHeader, setEditingHeader] = useState(false);
   const [savingHeader, setSavingHeader] = useState(false);
+  const [deletingWorkOrder, setDeletingWorkOrder] = useState(false);
   const [woNumber, setWoNumber] = useState("");
   const [woTitle, setWoTitle] = useState("");
   const maxPhotosPerWo = 6;
@@ -312,7 +398,7 @@ export default function WorkOrderDetailPage() {
       photoPaths.push(path);
     }
 
-    const cleaned = rawComment.trim();
+    const cleaned = cleanBulletText(rawComment);
     const taggedComment = isIssue ? `${ISSUE_PREFIX} ${cleaned}`.trim() : cleaned;
 
     const { error: insErr } = await supabase.from("wo_updates").insert({
@@ -349,7 +435,7 @@ export default function WorkOrderDetailPage() {
       return;
     }
 
-    const cleaned = editingComment.trim();
+    const cleaned = cleanBulletText(editingComment);
     if (!cleaned) {
       setErr("Comment cannot be empty.");
       return;
@@ -396,7 +482,7 @@ export default function WorkOrderDetailPage() {
       return;
     }
 
-    const cleaned = editingIssueComment.trim();
+    const cleaned = cleanBulletText(editingIssueComment);
     if (!cleaned) {
       setErr("Issue/recommendation cannot be empty.");
       return;
@@ -477,6 +563,46 @@ export default function WorkOrderDetailPage() {
     setDeletingPhotoKey(null);
     setMsg("Photo deleted");
     await load();
+  }
+
+  async function deleteWorkOrder() {
+    if (!wo || !hasManagerAccess(profile?.role) || deletingWorkOrder) return;
+
+    const confirmed = window.confirm(
+      `Delete work order ${wo.wo_number} - ${wo.title}?\n\nThis action cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setErr(null);
+    setMsg(null);
+    setDeletingWorkOrder(true);
+
+    const { data: sessionRes, error: sessionErr } = await supabase.auth.getSession();
+    const token = sessionRes.session?.access_token;
+    if (sessionErr || !token) {
+      setDeletingWorkOrder(false);
+      setErr("You must be signed in to delete a work order.");
+      return;
+    }
+
+    const res = await fetch("/api/delete-work-order", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ workOrderId: wo.id }),
+    });
+
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setDeletingWorkOrder(false);
+      setErr(typeof json?.error === "string" ? json.error : "Failed to delete work order.");
+      return;
+    }
+
+    router.push(`/reports/${reportId}/work-orders`);
+    router.refresh();
   }
 
   const generalUpdates = updates.filter((u) => getEntryKind(u.comment) === "update");
@@ -598,7 +724,14 @@ export default function WorkOrderDetailPage() {
               </>
             )}
           </div>
-          <span className={`status ${statusClass}`}>{wo.status}</span>
+          <div className="grid" style={{ justifyItems: "end", gap: "0.65rem" }}>
+            <span className={`status ${statusClass}`}>{wo.status}</span>
+            {hasManagerAccess(profile?.role) ? (
+              <button className="btn btn-danger" onClick={deleteWorkOrder} disabled={deletingWorkOrder}>
+                {deletingWorkOrder ? "Deleting..." : "Delete work order"}
+              </button>
+            ) : null}
+          </div>
         </div>
 
         <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
@@ -667,12 +800,11 @@ export default function WorkOrderDetailPage() {
       <div className="section-card grid" style={{ gap: "0.75rem" }}>
         <h3>Comments</h3>
 
-        <textarea
-          className="textarea"
+        <BulletEditor
           value={comment}
-          onChange={(e) => setComment(e.target.value)}
-          placeholder="Write a comment..."
-          rows={4}
+          onChange={setComment}
+          placeholder="Add one comment per line..."
+          minHeight="6.7rem"
         />
 
         <div style={{ display: "flex", gap: "0.6rem", flexWrap: "wrap", alignItems: "center" }}>
@@ -723,13 +855,12 @@ export default function WorkOrderDetailPage() {
       </div>
 
       <div className="section-card grid" style={{ gap: "0.75rem" }}>
-        <h3>Issues</h3>
-        <textarea
-          className="textarea"
+        <h3>Issues and Recommendations</h3>
+        <BulletEditor
           value={issuesComment}
-          onChange={(e) => setIssuesComment(e.target.value)}
-          placeholder="Describe issue found..."
-          rows={3}
+          onChange={setIssuesComment}
+          placeholder="Add one issue per line..."
+          minHeight="5.25rem"
         />
         <div style={{ display: "flex", gap: "0.6rem", alignItems: "center", flexWrap: "wrap" }}>
           <button
@@ -753,12 +884,11 @@ export default function WorkOrderDetailPage() {
 
             {editingUpdateId === u.id ? (
               <div className="grid" style={{ marginTop: "0.5rem", gap: "0.55rem" }}>
-                <textarea
-                  className="textarea"
+                <BulletEditor
                   value={editingComment}
-                  onChange={(e) => setEditingComment(e.target.value)}
-                  rows={4}
+                  onChange={setEditingComment}
                   placeholder="Edit saved completion comment..."
+                  minHeight="6.7rem"
                 />
                 <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
                   <button
@@ -782,7 +912,7 @@ export default function WorkOrderDetailPage() {
               </div>
             ) : (
               <>
-                {u.comment ? <div style={{ marginTop: "0.45rem" }}>{stripEntryPrefix(u.comment)}</div> : null}
+                {u.comment ? <BulletText value={stripEntryPrefix(u.comment) ?? ""} /> : null}
                 {hasManagerAccess(profile?.role) && u.comment ? (
                   <div style={{ marginTop: "0.6rem" }}>
                     <button
@@ -813,7 +943,7 @@ export default function WorkOrderDetailPage() {
       </div>
 
       <div className="grid">
-        <h3>Logged Issues</h3>
+        <h3>Logged Issues and Recommendations</h3>
         {issueEntries.map((u) => (
           <div key={u.id} className="section-card" style={{ padding: "0.85rem" }}>
             <div className="muted" style={{ fontSize: "0.78rem" }}>
@@ -821,12 +951,11 @@ export default function WorkOrderDetailPage() {
             </div>
             {editingIssueId === u.id ? (
               <div className="grid" style={{ marginTop: "0.5rem", gap: "0.55rem" }}>
-                <textarea
-                  className="textarea"
+                <BulletEditor
                   value={editingIssueComment}
-                  onChange={(e) => setEditingIssueComment(e.target.value)}
-                  rows={3}
+                  onChange={setEditingIssueComment}
                   placeholder="Edit saved issue/recommendation..."
+                  minHeight="5.25rem"
                 />
                 <div style={{ display: "flex", gap: "0.55rem", flexWrap: "wrap" }}>
                   <button
@@ -850,7 +979,7 @@ export default function WorkOrderDetailPage() {
               </div>
             ) : (
               <>
-                {u.comment ? <div style={{ marginTop: "0.45rem" }}>{stripEntryPrefix(u.comment)}</div> : null}
+                {u.comment ? <BulletText value={stripEntryPrefix(u.comment) ?? ""} /> : null}
                 {hasManagerAccess(profile?.role) && u.comment ? (
                   <div style={{ marginTop: "0.6rem" }}>
                     <button

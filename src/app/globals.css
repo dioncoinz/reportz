@@ -275,6 +275,47 @@ h3 {
   resize: vertical;
 }
 
+.entry-bullets {
+  margin: 0.45rem 0 0;
+  padding-left: 1.35rem;
+  white-space: pre-wrap;
+  list-style: disc outside;
+}
+
+.entry-bullets li {
+  display: list-item;
+  list-style: disc outside;
+}
+
+.entry-bullets li + li {
+  margin-top: 0.2rem;
+}
+
+.bullet-editor {
+  display: block;
+  margin: 0;
+  padding-left: 2rem;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  list-style: disc outside;
+}
+
+.bullet-editor li {
+  display: list-item;
+  list-style: disc outside;
+  padding-left: 0.12rem;
+}
+
+.bullet-editor li::marker {
+  color: var(--foreground);
+}
+
+.bullet-editor li:only-child:empty::before {
+  content: attr(data-placeholder);
+  color: var(--muted);
+  pointer-events: none;
+}
+
 .input:focus,
 .textarea:focus,
 .select:focus {

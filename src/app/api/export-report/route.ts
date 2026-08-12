@@ -58,6 +58,7 @@ const PHOTO_JPEG_QUALITY = 82;
 const LOGO_MAX_WIDTH = 1200;
 const LOGO_MAX_HEIGHT = 400;
 const LOGO_JPEG_QUALITY = 85;
+const BULLET_PREFIX = /^\s*(?:[•●▪◦*-]|\d+[.)])\s*/;
 
 const supabase = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
 
@@ -160,10 +161,18 @@ function getEntryKind(comment: string | null): "comments" | "issues" | "next" | 
 
 function cleanComment(comment: string | null) {
   if (!comment) return "";
-  if (comment.startsWith(ISSUE_PREFIX)) return comment.slice(ISSUE_PREFIX.length).trim();
-  if (comment.startsWith(NEXT_SHUT_PREFIX)) return comment.slice(NEXT_SHUT_PREFIX.length).trim();
+  if (comment.startsWith(ISSUE_PREFIX)) return cleanBulletText(comment.slice(ISSUE_PREFIX.length));
+  if (comment.startsWith(NEXT_SHUT_PREFIX)) return cleanBulletText(comment.slice(NEXT_SHUT_PREFIX.length));
   if (comment.startsWith(EMERGENT_PREFIX)) return "";
-  return comment.trim();
+  return cleanBulletText(comment);
+}
+
+function cleanBulletText(value: string) {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.replace(BULLET_PREFIX, "").trim())
+    .filter(Boolean)
+    .join("\n");
 }
 
 function contactLines(value: string | null | undefined) {
@@ -204,16 +213,17 @@ function titleParts(report: ReportRow) {
 }
 
 function asBulletRuns(rows: UpdateRow[]) {
-  const nonEmptyRows = rows
-    .map((u) => ({ ...u, cleanedComment: cleanComment(u.comment) }))
-    .filter((u) => u.cleanedComment.length > 0)
-    .slice(0, 2);
+  const items = rows
+    .slice(0, 2)
+    .flatMap((u) => cleanComment(u.comment).split("\n"))
+    .map((line) => line.trim())
+    .filter(Boolean);
 
-  return nonEmptyRows.map((u, index, arr) => ({
-    text: u.cleanedComment,
+  return items.map((item, index) => ({
+    text: item,
     options: {
       bullet: { indent: 14 },
-      breakLine: index < arr.length - 1,
+      breakLine: index < items.length - 1,
     },
   }));
 }
@@ -842,7 +852,12 @@ export async function GET(req: NextRequest) {
 
     const sections = [
       { title: "Completion Comments", rows: comments, y: galleryY, h: commentSectionH },
-      { title: "Issues/Recommendations", rows: issues, y: galleryY + commentSectionH + commentSectionGap, h: commentSectionH },
+      {
+        title: "Issues and Recommendations",
+        rows: issues,
+        y: galleryY + commentSectionH + commentSectionGap,
+        h: commentSectionH,
+      },
     ] as const;
 
     for (const section of sections) {
