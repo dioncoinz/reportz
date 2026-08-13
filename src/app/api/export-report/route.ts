@@ -35,6 +35,7 @@ type WorkOrderRow = {
   wo_number: string;
   title: string | null;
   status: "open" | "complete" | "cancelled" | "archived";
+  emergent_work: boolean;
   cancelled_reason: string | null;
   completed_at: string | null;
   display_order?: number | null;
@@ -142,6 +143,22 @@ async function optimizeImage(
 
 function asDataUri(buf: Buffer, mime: string) {
   return `data:${mime};base64,${buf.toString("base64")}`;
+}
+
+async function imageSizeWithinBox(buf: Buffer, maxWidth: number, maxHeight: number) {
+  try {
+    const { default: sharp } = await import("sharp");
+    const metadata = await sharp(buf, { failOn: "none" }).metadata();
+    if (!metadata.width || !metadata.height) return { w: maxWidth, h: maxHeight };
+
+    const scale = Math.min(maxWidth / metadata.width, maxHeight / metadata.height);
+    return {
+      w: metadata.width * scale,
+      h: metadata.height * scale,
+    };
+  } catch {
+    return { w: maxWidth, h: maxHeight };
+  }
 }
 
 function statusColor(status: WorkOrderRow["status"]) {
@@ -335,31 +352,54 @@ export async function GET(req: NextRequest) {
     .eq("tenant_id", report.tenant_id)
     .maybeSingle<BrandingRow>();
 
-  const wosResult = await supabase
-    .from("work_orders")
-    .select("id, wo_number, title, status, cancelled_reason, completed_at, display_order")
-    .eq("report_id", id)
-    .order("display_order", { ascending: true, nullsFirst: false })
-    .order("created_at", { ascending: true })
-    .returns<WorkOrderRow[]>();
+  const missingWorkOrderColumns = new Set<"emergent_work" | "display_order">();
+  let woRows: WorkOrderRow[] = [];
+  let workOrderError: { message?: string; code?: string } | null = null;
 
-  const wosFallback = wosResult.error && isMissingColumn(wosResult.error, "display_order")
-    ? await supabase
-        .from("work_orders")
-        .select("id, wo_number, title, status, cancelled_reason, completed_at")
-        .eq("report_id", id)
-        .order("created_at", { ascending: true })
-        .returns<WorkOrderRow[]>()
-    : null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const includeEmergent = !missingWorkOrderColumns.has("emergent_work");
+    const includeDisplayOrder = !missingWorkOrderColumns.has("display_order");
+    const selectColumns = [
+      "id",
+      "wo_number",
+      "title",
+      "status",
+      includeEmergent ? "emergent_work" : null,
+      "cancelled_reason",
+      "completed_at",
+      includeDisplayOrder ? "display_order" : null,
+    ].filter(Boolean);
 
-  if (wosResult.error && !wosFallback) {
-    return NextResponse.json({ error: wosResult.error.message }, { status: 500 });
+    let query = supabase.from("work_orders").select(selectColumns.join(", ")).eq("report_id", id);
+    if (includeDisplayOrder) query = query.order("display_order", { ascending: true, nullsFirst: false });
+
+    const result = await query
+      .order("created_at", { ascending: true })
+      .returns<Array<Omit<WorkOrderRow, "emergent_work"> & { emergent_work?: boolean }>>();
+
+    workOrderError = result.error;
+    if (!workOrderError) {
+      woRows = (result.data ?? []).map((workOrder) => ({
+        ...workOrder,
+        emergent_work: Boolean(workOrder.emergent_work),
+      }));
+      break;
+    }
+
+    let foundMissingOptional = false;
+    for (const column of ["emergent_work", "display_order"] as const) {
+      if (!missingWorkOrderColumns.has(column) && isMissingColumn(workOrderError, column)) {
+        missingWorkOrderColumns.add(column);
+        foundMissingOptional = true;
+      }
+    }
+    if (!foundMissingOptional) break;
   }
-  if (wosFallback?.error) {
-    return NextResponse.json({ error: wosFallback.error.message }, { status: 500 });
+
+  if (workOrderError) {
+    return NextResponse.json({ error: workOrderError.message ?? "Could not load work orders." }, { status: 500 });
   }
 
-  const woRows = (wosFallback?.data ?? wosResult.data) ?? [];
   const woIds = woRows.map((w) => w.id);
 
   const { data: updates } = woIds.length
@@ -377,10 +417,21 @@ export async function GET(req: NextRequest) {
     updatesByWo.get(u.work_order_id)?.push(u);
   }
 
+  const emergentByMarker = new Set(
+    (updates ?? [])
+      .filter((update) => update.comment?.startsWith(EMERGENT_PREFIX))
+      .map((update) => update.work_order_id)
+  );
+  woRows = woRows.map((workOrder) => ({
+    ...workOrder,
+    emergent_work: workOrder.emergent_work || emergentByMarker.has(workOrder.id),
+  }));
+
   const total = woRows.length;
   const complete = woRows.filter((w) => w.status === "complete").length;
   const cancelled = woRows.filter((w) => w.status === "cancelled").length;
   const open = woRows.filter((w) => w.status === "open").length;
+  const emergent = woRows.filter((w) => w.emergent_work).length;
   const safetyInjuries = Math.max(report.safety_injuries ?? 0, 0);
   const safetyIncidents = Math.max(report.safety_incidents ?? 0, 0);
 
@@ -391,6 +442,7 @@ export async function GET(req: NextRequest) {
   const title = titleParts(report);
 
   let logoData: string | null = null;
+  let logoSize = { w: 2.2, h: 0.8 };
   if (branding?.logo_path) {
     const logo = await file("branding-logos", branding.logo_path);
     if (logo) {
@@ -402,6 +454,7 @@ export async function GET(req: NextRequest) {
         preserveWebp: true,
       });
       logoData = asDataUri(optimizedLogo.buffer, optimizedLogo.mime);
+      logoSize = await imageSizeWithinBox(optimizedLogo.buffer, 2.2, 0.8);
     }
   }
 
@@ -421,10 +474,9 @@ export async function GET(req: NextRequest) {
       slide.addImage({
         data: logoData,
         x: 0.6,
-        y: 0.55,
-        w: 2.2,
-        h: 0.8,
-        sizing: { type: "contain", w: 2.2, h: 0.8 },
+        y: 0.55 + (0.8 - logoSize.h) / 2,
+        w: logoSize.w,
+        h: logoSize.h,
       });
     }
     slide.addText(company, {
@@ -573,24 +625,26 @@ export async function GET(req: NextRequest) {
       color: "0F172A",
     });
 
+    const emergentColor = "0F6CBD";
     const kpi = [
       { label: "Total", val: total, bg: "F8FAFF", color: "0F172A" },
       { label: "Completed", val: complete, bg: "EAF8F0", color: "1B8F5A" },
       { label: "Open", val: open, bg: "FFF7E4", color: "B67710" },
       { label: "Cancelled", val: cancelled, bg: "FCEDEE", color: "B92C2C" },
+      { label: "Emergent", val: emergent, bg: "EAF4FF", color: emergentColor },
     ];
 
     kpi.forEach((k, i) => {
-      const x = 0.6 + i * 3.1;
+      const x = 0.6 + i * 2.45;
       slide.addShape(pptx.ShapeType.roundRect, {
         x,
         y: 1.1,
-        w: 2.85,
+        w: 2.25,
         h: 1.25,        fill: { color: k.bg },
         line: { color: "D8DEEA", pt: 1 },
       });
-      slide.addText(k.label, { x: x + 0.2, y: 1.3, w: 2.4, h: 0.25, fontFace: "Aptos", fontSize: 11, color: "5F6F88", bold: true });
-      slide.addText(String(k.val), { x: x + 0.2, y: 1.58, w: 2.4, h: 0.55, fontFace: "Aptos", fontSize: 28, color: k.color, bold: true });
+      slide.addText(k.label, { x: x + 0.18, y: 1.3, w: 1.92, h: 0.25, fontFace: "Aptos", fontSize: 11, color: "5F6F88", bold: true });
+      slide.addText(String(k.val), { x: x + 0.18, y: 1.58, w: 1.92, h: 0.55, fontFace: "Aptos", fontSize: 24, color: k.color, bold: true });
     });
 
     // Status composition bar
@@ -598,8 +652,9 @@ export async function GET(req: NextRequest) {
       { label: "Completed", value: complete, color: "1B8F5A" },
       { label: "Open", value: open, color: "B67710" },
       { label: "Cancelled", value: cancelled, color: "B92C2C" },
+      { label: "Emergent", value: emergent, color: emergentColor },
     ];
-    const mixTotal = Math.max(total, 1);
+    const mixTotal = Math.max(mix.reduce((sum, item) => sum + item.value, 0), 1);
     let cursor = 0.6;
     const width = 12.1;
 
@@ -817,6 +872,27 @@ export async function GET(req: NextRequest) {
       color: sColor,
     });
 
+    if (w.emergent_work) {
+      slide.addShape(pptx.ShapeType.roundRect, {
+        x: 3.1,
+        y: 1.25,
+        w: 1.75,
+        h: 0.46,
+        fill: { color: "EEF6FF" },
+        line: { color: "0F6CBD", pt: 1 },
+      });
+      slide.addText("EMERGENT", {
+        x: 3.3,
+        y: 1.39,
+        w: 1.35,
+        h: 0.2,
+        fontFace: "Aptos",
+        fontSize: 10,
+        bold: true,
+        color: "0F6CBD",
+      });
+    }
+
     const list = updatesByWo.get(w.id) ?? [];
     const statusMeta = w.status === "cancelled" ? `Reason: ${w.cancelled_reason ?? "Not provided"}` : w.status === "complete" ? "" : "In progress";
 
@@ -967,6 +1043,59 @@ export async function GET(req: NextRequest) {
         italic: true,
       });
     }
+  }
+
+  // Final slide: Feedback
+  {
+    const slide = pptx.addSlide();
+    slide.background = { color: "FFFFFF" };
+    slide.addShape(pptx.ShapeType.rect, {
+      x: 0,
+      y: 0,
+      w: 13.333,
+      h: 0.2,
+      fill: { color: accent },
+      line: { color: accent },
+    });
+    if (logoData) {
+      slide.addImage({
+        data: logoData,
+        x: 0.6,
+        y: 0.32 + (0.8 - logoSize.h) / 2,
+        w: logoSize.w,
+        h: logoSize.h,
+      });
+    }
+
+    slide.addText("Feedback", {
+      x: 3.0,
+      y: 0.45,
+      w: 9.7,
+      h: 0.5,
+      fontFace: "Aptos",
+      fontSize: 26,
+      bold: true,
+      color: "0F172A",
+    });
+
+    slide.addShape(pptx.ShapeType.roundRect, {
+      x: 0.6,
+      y: 1.1,
+      w: 12.1,
+      h: 6.0,
+      fill: { color: "F8FAFF" },
+      line: { color: "D8DEEA", pt: 1 },
+    });
+    slide.addText("Enter additional feedback here...", {
+      x: 0.88,
+      y: 1.38,
+      w: 11.55,
+      h: 0.3,
+      fontFace: "Aptos",
+      fontSize: 14,
+      color: "64748B",
+      italic: true,
+    });
   }
 
   const out = await pptx.write({ outputType: "nodebuffer" });
